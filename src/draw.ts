@@ -69,16 +69,16 @@ const PALETTES: readonly Palette[] = [
 ]
 
 export function computeLayout(w: number, h: number): Layout {
-  const drawerW = clamp(w * 0.2, 92, 168)
-  const lineLeft = clamp(w * 0.06, 22, 64)
-  const lineRight = w - drawerW - clamp(w * 0.03, 12, 28)
-  const lineY = clamp(h * 0.4, 118, h * 0.5)
-  const sag = clamp(h * 0.025, 8, 22)
+  const drawerW = clamp(w * 0.18, 78, 150)
+  const lineLeft = clamp(w * 0.055, 18, 56)
+  const lineRight = w - drawerW - clamp(w * 0.035, 10, 36)
+  const lineY = clamp(h * 0.38, 108, h * 0.46)
+  const sag = clamp(h * 0.02, 6, 18)
   const span = Math.max(120, lineRight - lineLeft)
   const slotCount = 6
   const step = span / slotCount
-  const sockH = clamp(Math.min(h * 0.28, step * 2.15), 68, 156)
-  const sockW = clamp(sockH * 0.56, 36, step * 0.86)
+  const sockH = clamp(Math.min(h * 0.34, step * 2.7), 92, 168)
+  const sockW = clamp(sockH * 0.52, 34, step * 0.9)
   const slotX: number[] = []
   const slotY: number[] = []
   for (let index = 0; index < slotCount; index++) {
@@ -86,10 +86,10 @@ export function computeLayout(w: number, h: number): Layout {
     slotX.push(x)
     slotY.push(linePoint(lineLeft, lineRight, lineY, sag, x))
   }
-  const drawerX = w - drawerW - clamp(w * 0.02, 8, 18)
-  const drawerH = clamp(h * 0.42, 180, 320)
-  const drawerY = lineY + sockH * 0.18
-  const mouthH = clamp(sockH * 0.55, 48, 90)
+  const drawerX = w - drawerW - clamp(w * 0.018, 6, 16)
+  const drawerH = clamp(sockH * 1.45, 148, 230)
+  const drawerY = lineY + sockH * 0.08
+  const mouthH = clamp(sockH * 0.42, 40, 72)
   return {
     w,
     h,
@@ -302,60 +302,59 @@ function drawSock(
   faceOverride?: 1 | -1,
 ): void {
   const palette = PALETTES[sock.pattern % PALETTES.length] ?? PALETTES[0]
+  if (!palette) return
   const face = faceOverride ?? faceFor(sock.id)
-  const sway = time === 0 ? 0 : Math.sin(time * 0.002 + sock.id) * 0.05
-  const hop = Math.sin(Math.min(1, sock.bounce) * Math.PI) * 18
+  const sway = time === 0 ? 0 : Math.sin(time * 0.002 + sock.id) * 0.045
+  const hop = Math.sin(Math.min(1, sock.bounce) * Math.PI) * 16
   const w = layout.sockW * sock.scale
   const h = layout.sockH * sock.scale
-  const legW = w * 0.46
-  const cuffH = h * 0.14
+  const cuffH = h * 0.13
+  const legW = w * 0.48
 
   ctx.save()
   ctx.globalAlpha = sock.alpha
   ctx.translate(sock.x, sock.y - sock.lift * 12 - hop)
   ctx.rotate(sway * face)
 
-  if (sock.glow === 'ready' || sock.glow === 'pair') {
-    ctx.fillStyle = sock.glow === 'ready' ? 'rgba(47, 143, 107, 0.18)' : 'rgba(47, 143, 107, 0.1)'
+  if (sock.glow === 'ready' || sock.glow === 'next') {
+    ctx.fillStyle = sock.glow === 'ready' ? 'rgba(47, 143, 107, 0.2)' : 'rgba(226, 91, 74, 0.1)'
     ctx.beginPath()
-    ctx.ellipse(0, h * 0.55, w * 0.7, h * 0.48, 0, 0, Math.PI * 2)
+    ctx.ellipse(face * w * 0.12, h * 0.62, w * 0.62, h * 0.42, 0, 0, Math.PI * 2)
     ctx.fill()
   }
 
-  ctx.fillStyle = 'rgba(80, 50, 30, 0.13)'
+  ctx.fillStyle = 'rgba(80, 50, 30, 0.14)'
   ctx.beginPath()
-  ctx.ellipse(6, h * 0.96, w * 0.34, h * 0.05, 0, 0, Math.PI * 2)
+  ctx.ellipse(face * w * 0.12, h * 0.98, w * 0.46, h * 0.045, 0, 0, Math.PI * 2)
   ctx.fill()
 
   ctx.scale(face, 1)
   ctx.fillStyle = palette.body
-  roundRect(ctx, -legW / 2, 0, legW, h * 0.78, legW * 0.45)
+  sockOutline(ctx, w, h)
   ctx.fill()
+  ctx.save()
+  sockOutline(ctx, w, h)
+  ctx.clip()
+  motif(ctx, sock.pattern, legW, h, palette)
+  ctx.fillStyle = palette.toe
   ctx.beginPath()
-  ctx.ellipse(w * 0.16, h * 0.72, w * 0.42, h * 0.15, -0.15, 0, Math.PI * 2)
+  ctx.ellipse(w * 0.5, h * 0.7, w * 0.16, h * 0.1, 0, 0, Math.PI * 2)
   ctx.fill()
   ctx.fillStyle = palette.heel
   ctx.beginPath()
-  ctx.ellipse(-legW * 0.28, h * 0.7, w * 0.13, h * 0.11, 0, 0, Math.PI * 2)
+  ctx.ellipse(-w * 0.08, h * 0.74, w * 0.12, h * 0.09, 0, 0, Math.PI * 2)
   ctx.fill()
-  ctx.fillStyle = palette.toe
-  ctx.beginPath()
-  ctx.ellipse(w * 0.34, h * 0.7, w * 0.16, h * 0.11, 0, 0, Math.PI * 2)
-  ctx.fill()
-
-  ctx.save()
-  roundRect(ctx, -legW / 2 + 2, cuffH, legW - 4, h * 0.56, 8)
-  ctx.clip()
-  motif(ctx, sock.pattern, legW, h, palette)
   ctx.restore()
 
-  ctx.fillStyle = 'rgba(255,255,255,0.2)'
-  ctx.fillRect(-legW / 2 + 2, cuffH, 3, h * 0.48)
+  ctx.strokeStyle = 'rgba(50, 30, 20, 0.22)'
+  ctx.lineWidth = 1.5
+  sockOutline(ctx, w, h)
+  ctx.stroke()
 
   ctx.fillStyle = palette.cuff
-  roundRect(ctx, -legW / 2 - 1, 0, legW + 2, cuffH, 5)
+  roundRect(ctx, -legW / 2 - 1, 0, legW + 2, cuffH, 4)
   ctx.fill()
-  ctx.strokeStyle = 'rgba(70, 40, 20, 0.18)'
+  ctx.strokeStyle = 'rgba(70, 40, 20, 0.22)'
   ctx.lineWidth = 1
   for (let rib = 1; rib <= 3; rib++) {
     const y = (cuffH * rib) / 4
@@ -365,6 +364,22 @@ function drawSock(
     ctx.stroke()
   }
   ctx.restore()
+}
+
+function sockOutline(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  const leg = w * 0.5
+  const ankle = h * 0.62
+  const footH = h * 0.16
+  const toe = w * 0.34
+  ctx.beginPath()
+  ctx.moveTo(-leg / 2, 0)
+  ctx.lineTo(-leg / 2, ankle)
+  ctx.quadraticCurveTo(-leg * 0.72, ankle + footH * 0.35, -leg * 0.15, ankle + footH)
+  ctx.lineTo(toe, ankle + footH * 0.9)
+  ctx.quadraticCurveTo(toe + w * 0.14, ankle + footH * 0.45, toe, ankle - footH * 0.05)
+  ctx.quadraticCurveTo(leg * 0.7, ankle - footH * 0.55, leg / 2, ankle - h * 0.04)
+  ctx.lineTo(leg / 2, 0)
+  ctx.closePath()
 }
 
 function motif(

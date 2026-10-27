@@ -19,6 +19,8 @@ export type Difficulty = {
   window: number
   intervalMs: number
   patterns: number
+  /** Neighbor swaps applied before the intake window is repaired. */
+  scramble: number
 }
 
 export function makeSock(pattern: number, ids: IdGen): Sock {
@@ -149,7 +151,8 @@ export function difficulty(folds: number): Difficulty {
   const patterns = safeFolds < 6 ? 3 : safeFolds < 14 ? 4 : safeFolds < 24 ? 5 : PATTERN_COUNT
   const window = Math.min(SLOT_COUNT, 3 + Math.floor(safeFolds / 6))
   const intervalMs = Math.max(1600, 5200 - safeFolds * 80)
-  return { window, intervalMs, patterns }
+  const scramble = safeFolds < 4 ? 4 : safeFolds < 12 ? 6 : 8
+  return { window, intervalMs, patterns, scramble }
 }
 
 export function pointsForCombo(combo: number): number {
@@ -162,9 +165,8 @@ export function createOpeningLine(rng: Rng, ids: IdGen): Sock[] {
   for (let pattern = 0; pattern < pairs; pattern++) {
     line.push(makeSock(pattern, ids), makeSock(pattern, ids))
   }
-  const kept = line.slice(SLOT_COUNT - 2)
-  const left = scramble(line.slice(0, SLOT_COUNT - 2), 6, rng)
-  return [...left, ...kept]
+  // The first pair is ready to fold. Everything behind it is jumbled.
+  return bubblePartnerToIntake(scramble(line, 12, rng))
 }
 
 export function spawnPair(
@@ -191,10 +193,12 @@ export function afterFold(
   line: readonly Sock[],
   patterns: number,
   window: number,
+  scrambleSwaps: number,
   rng: Rng,
   ids: IdGen,
 ): Sock[] {
   const rest = line.slice(0, -2)
   const [left, right] = spawnPair(rest, patterns, rng, ids)
-  return repairIntake([left, right, ...rest], window)
+  const mixed = scramble([left, right, ...rest], scrambleSwaps, rng)
+  return repairIntake(mixed, window)
 }

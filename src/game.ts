@@ -50,6 +50,14 @@ type Drag = {
   moved: boolean
 }
 
+type Floater = {
+  text: string
+  x: number
+  y: number
+  life: number
+  max: number
+}
+
 export class Game {
   private readonly canvas: HTMLCanvasElement
   private readonly ctx: CanvasRenderingContext2D
@@ -76,6 +84,7 @@ export class Game {
   private shake = 0
   private open = 0.6
   private pendingOver = false
+  private floaters: Floater[] = []
   private last = 0
   private snapped = false
 
@@ -165,6 +174,7 @@ export class Game {
   private setPhase(phase: Phase): void {
     this.phase = phase
     if (phase === 'play') this.audio.unlock()
+    if (phase !== 'play') byId('hint').hidden = true
     this.showCard(phase)
     this.syncHud()
   }
@@ -180,6 +190,11 @@ export class Game {
       if (this.lock <= 0 && this.pendingOver) this.finish()
     }
     this.shake *= Math.exp(-dt / 90)
+    for (const floater of this.floaters) {
+      floater.life -= dt
+      floater.y -= dt * 0.02
+    }
+    this.floaters = this.floaters.filter((floater) => floater.life > 0)
     const targetOpen = this.ghosts.length > 0 ? 1 : this.phase === 'play' ? 0.72 : 0.58
     this.open += (targetOpen - this.open) * (1 - Math.exp(-dt / 140))
     this.placeActors(dt)
@@ -193,6 +208,7 @@ export class Game {
     if (!matched && !fromTimer) {
       this.shake = 3
       this.audio.nudge()
+      this.note('Not a pair yet')
       return
     }
     if (!matched) {
@@ -200,6 +216,7 @@ export class Game {
       this.lives -= 1
       this.audio.reject()
       this.shake = 8
+      this.note('Not a pair')
       this.bounceIntake()
       this.lock = 480
       this.timeLeft = difficulty(this.folds).intervalMs
@@ -216,13 +233,15 @@ export class Game {
     this.combo += 1
     this.folds += 1
     this.bestCombo = Math.max(this.bestCombo, this.combo)
-    this.score += pointsForCombo(this.combo)
+    const gained = pointsForCombo(this.combo)
+    this.score += gained
+    this.note(`+${gained}`)
     if (this.score > this.best) {
       this.best = this.score
       writeBest(this.best)
     }
     const diff = difficulty(this.folds)
-    this.line = afterFold(this.line, diff.patterns, diff.window, Math.random, this.ids)
+    this.line = afterFold(this.line, diff.patterns, diff.window, diff.scramble, Math.random, this.ids)
     this.timeLeft = diff.intervalMs
     this.lock = 420
     this.selectedId = null
@@ -454,7 +473,31 @@ export class Game {
     }
     this.ctx.clearRect(0, 0, this.layout.w, this.layout.h)
     paint(this.ctx, frame)
+    this.paintFloaters()
     this.paintHint(ready)
+  }
+
+  private note(text: string): void {
+    this.floaters.push({
+      text,
+      x: this.layout.knob.x,
+      y: this.layout.knob.y - 28,
+      life: 900,
+      max: 900,
+    })
+  }
+
+  private paintFloaters(): void {
+    const ctx = this.ctx
+    ctx.save()
+    ctx.font = '600 18px Outfit, "Avenir Next", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#3a2a22'
+    for (const floater of this.floaters) {
+      ctx.globalAlpha = Math.max(0, floater.life / floater.max)
+      ctx.fillText(floater.text, floater.x, floater.y)
+    }
+    ctx.restore()
   }
 
   private paintHint(ready: boolean): void {
@@ -549,11 +592,6 @@ export class Game {
 function glowFor(line: readonly Sock[], slot: number, ready: boolean): SockDraw['glow'] {
   const count = line.length
   if (slot >= count - 2) return ready ? 'ready' : 'next'
-  const sock = line[slot]
-  const prev = line[slot - 1]
-  const next = line[slot + 1]
-  if (!sock) return 'none'
-  if ((prev && prev.pattern === sock.pattern) || (next && next.pattern === sock.pattern)) return 'pair'
   return 'none'
 }
 

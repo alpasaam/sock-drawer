@@ -95,7 +95,7 @@ describe('a long line of laundry', () => {
       expect(intakeSolvable(line, diff.window)).toBe(true)
       line = bubblePartnerToIntake(line)
       expect(isIntakeMatch(line)).toBe(true)
-      line = afterFold(line, diff.patterns, diff.window, rng, ids)
+      line = afterFold(line, diff.patterns, diff.window, diff.scramble, rng, ids)
       expect(line).toHaveLength(SLOT_COUNT)
     }
   })
@@ -111,8 +111,34 @@ describe('difficulty', () => {
     expect(later.patterns).toBe(6)
     expect(later.window).toBe(SLOT_COUNT)
     expect(later.intervalMs).toBeGreaterThanOrEqual(1600)
+    expect(later.scramble).toBeGreaterThan(early.scramble)
   })
 })
+
+describe('deals that need a swap', () => {
+  it('does not hand over a fully sorted line', () => {
+    let unsorted = 0
+    for (let seed = 1; seed <= 24; seed++) {
+      const rng = rngFrom(seed)
+      const ids = { next: 1 }
+      let line = createOpeningLine(rng, ids)
+      expect(isIntakeMatch(line)).toBe(true)
+      if (!isSortedPairs(line)) unsorted += 1
+      const diff = difficulty(1)
+      line = afterFold(line, diff.patterns, diff.window, diff.scramble, rng, ids)
+      expect(intakeSolvable(line, diff.window)).toBe(true)
+      if (!isIntakeMatch(line)) unsorted += 1
+    }
+    expect(unsorted).toBeGreaterThan(10)
+  })
+})
+
+function isSortedPairs(line: readonly Sock[]): boolean {
+  for (let index = 0; index < line.length; index += 2) {
+    if (line[index]?.pattern !== line[index + 1]?.pattern) return false
+  }
+  return true
+}
 
 describe('pointsForCombo', () => {
   it('pays more for a longer streak', () => {
