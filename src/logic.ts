@@ -105,6 +105,68 @@ export function repairIntake(line: readonly Sock[], window: number): Sock[] {
   return next
 }
 
+function exchange(line: Sock[], i: number, j: number): void {
+  const a = line[i]
+  const b = line[j]
+  if (!a || !b || i === j) return
+  line[i] = b
+  line[j] = a
+}
+
+function slide(line: Sock[], from: number, to: number): void {
+  if (from === to || from < 0 || to < 0 || from >= line.length || to >= line.length) return
+  const step = from < to ? 1 : -1
+  let cursor = from
+  while (cursor !== to) {
+    exchange(line, cursor, cursor + step)
+    cursor += step
+  }
+}
+
+/**
+ * Park the end sock's partner at the far edge of the window.
+ * The last two are not a pair, so the line will not fold itself.
+ */
+export function unsettle(line: readonly Sock[], window: number): Sock[] {
+  const count = line.length
+  if (count < 3) return [...line]
+  const span = Math.max(3, Math.min(window, count))
+  const start = count - span
+  const next = [...line]
+  const end = count - 1
+  const pattern = next[end]?.pattern
+  if (pattern == null) return next
+
+  let partner = partnerIndex(next, end)
+  if (partner < 0) return next
+  if (partner !== start) slide(next, partner, start)
+
+  if (isIntakeMatch(next)) {
+    for (let index = end - 2; index >= 0; index--) {
+      if (next[index]?.pattern !== pattern) {
+        exchange(next, index, end - 1)
+        break
+      }
+    }
+  }
+
+  partner = partnerIndex(next, end)
+  if (partner >= 0 && partner < start) slide(next, partner, start)
+  if (isIntakeMatch(next) && next[start]?.pattern !== pattern && start < end - 1) {
+    exchange(next, start, end - 1)
+    partner = partnerIndex(next, end)
+    if (partner >= 0 && partner < start) slide(next, partner, start)
+  }
+  return next
+}
+
+/** Sock the player still needs to walk toward the drawer. -1 when the last two already match. */
+export function helperIndex(line: readonly Sock[]): number {
+  const end = line.length - 1
+  if (end < 1 || isIntakeMatch(line)) return -1
+  return partnerIndex(line, end)
+}
+
 /** Move the nearest partner next to the rightmost sock. This is what a perfect fold looks like. */
 export function bubblePartnerToIntake(line: readonly Sock[]): Sock[] {
   const next = [...line]
@@ -171,72 +233,32 @@ export function createOpeningLine(rng: Rng, ids: IdGen): Sock[] {
 
 export type Laundry = {
   line: Sock[]
-  /** The sock that stepped into the drawer and is waiting for its partner. */
-  held: Sock | null
-  /** Pattern of a sock promised on the next step, so pairs stay even. */
-  pending: number | null
 }
 
 export type StepOutcome = {
   state: Laundry
-  leaving: Sock
-  spawned: Sock
-  /** True when a sock was already waiting and this step completes the pair. */
-  judged: boolean
+  left: Sock
+  right: Sock
   matched: boolean
+  spawned: [Sock, Sock]
 }
 
 export function createLaundry(rng: Rng, ids: IdGen): Laundry {
-  return { line: createOpeningLine(rng, ids), held: null, pending: null }
+  return { line: unsettle(createOpeningLine(rng, ids), 3) }
 }
 
-/** Counts on the line, in the drawer mouth, and promised for the next step. */
+/** Every pattern on the line still has a partner somewhere. */
 export function inPlayEven(state: Laundry): boolean {
-  const counts = new Map<number, number>()
-  const add = (pattern: number) => counts.set(pattern, (counts.get(pattern) ?? 0) + 1)
-  for (const sock of state.line) add(sock.pattern)
-  if (state.held) add(state.held.pattern)
-  if (state.pending != null) add(state.pending)
-  for (const count of counts.values()) {
-    if (count % 2 !== 0) return false
-  }
-  return true
+  return countsAreEven(state.line)
 }
 
-/** The next step can be made into a match by neighbor swaps inside the window. */
+/** The next fold can be made by neighbor swaps inside the window. */
 export function stepIsSavable(state: Laundry, window: number): boolean {
-  if (!state.held) return intakeSolvable(state.line, window)
-  const count = state.line.length
-  const span = Math.max(1, Math.min(window, count))
-  const start = count - span
-  return state.line.slice(start).some((sock) => sock.pattern === state.held?.pattern)
+  return intakeSolvable(state.line, window)
 }
 
-/** Slide the nearest sock of `pattern` onto the last peg. */
-export function bubblePatternToEnd(line: readonly Sock[], pattern: number): Sock[] {
-  const next = [...line]
-  let index = -1
-  for (let cursor = next.length - 1; cursor >= 0; cursor--) {
-    if (next[cursor]?.pattern === pattern) {
-      index = cursor
-      break
-    }
-  }
-  if (index < 0) return next
-  while (index < next.length - 1) {
-    const left = next[index]
-    const right = next[index + 1]
-    if (!left || !right) break
-    next[index] = right
-    next[index + 1] = left
-    index += 1
-  }
-  return next
-}
-
-/** Put the line into the arrangement a careful player would step from. */
+/** Put the last two into the pair a careful player would fold. */
 export function prepareStep(state: Laundry): Laundry {
-  if (state.held) return { ...state, line: bubblePatternToEnd(state.line, state.held.pattern) }
   return { ...state, line: bubblePartnerToIntake(state.line) }
 }
 
@@ -261,8 +283,9 @@ export function retie(line: readonly Sock[], fallenA: Sock, fallenB: Sock): Sock
 }
 
 /**
- * One beat. The last sock steps off, a new sock hops on the far end.
- * The first step only parks the sock in the drawer. The second step folds a match or drops a mismatch.
+ * One beat. The last two socks leave together.
+ * A match is folded. A mismatch falls, and the line is retied so pairs stay even.
+ * Two new socks hop on at the far end, then the intake is left one swap away.
  */
 export function stepLaundry(
   state: Laundry,
@@ -272,46 +295,18 @@ export function stepLaundry(
   ids: IdGen,
 ): StepOutcome {
   const count = state.line.length
-  const leaving = state.line[count - 1]
-  if (!leaving) {
-    throw new Error('The line is empty')
+  const left = state.line[count - 2]
+  const right = state.line[count - 1]
+  if (!left || !right) {
+    throw new Error('The line needs two socks')
   }
-  const rest = state.line.slice(0, -1)
-  const spawned = takeSpawn(rest, state.pending, patterns, rng, ids)
-  let line = [spawned.sock, ...rest]
-
-  if (!state.held) {
-    return {
-      state: { line, held: leaving, pending: spawned.pending },
-      leaving,
-      spawned: spawned.sock,
-      judged: false,
-      matched: false,
-    }
-  }
-
-  const matched = state.held.pattern === leaving.pattern
-  if (!matched) line = retie(line, state.held, leaving)
-  line = repairIntake(line, window)
-  return {
-    state: { line, held: null, pending: spawned.pending },
-    leaving,
-    spawned: spawned.sock,
-    judged: true,
-    matched,
-  }
-}
-
-function takeSpawn(
-  existing: readonly Sock[],
-  pending: number | null,
-  patterns: number,
-  rng: Rng,
-  ids: IdGen,
-): { sock: Sock; pending: number | null } {
-  if (pending != null) return { sock: makeSock(pending, ids), pending: null }
-  const pattern = pickPattern(existing, patterns, rng)
-  return { sock: makeSock(pattern, ids), pending: pattern }
+  const matched = left.pattern === right.pattern
+  let line = state.line.slice(0, -2)
+  if (!matched) line = retie(line, left, right)
+  const pattern = pickPattern(line, patterns, rng)
+  const spawned: [Sock, Sock] = [makeSock(pattern, ids), makeSock(pattern, ids)]
+  line = unsettle([spawned[0], spawned[1], ...line], window)
+  return { state: { line }, left, right, matched, spawned }
 }
 
 function pickPattern(existing: readonly Sock[], patterns: number, rng: Rng): number {

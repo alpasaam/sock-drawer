@@ -52,19 +52,19 @@
         <h1>Sock Drawer</h1>
         <p class="lead">The clothesline steps toward the drawer. Only neighbors can trade places.</p>
         <ol>
-          <li>On each beat, every sock steps one peg closer. The one at the end hops into the drawer and waits.</li>
+          <li>On each beat, the last two socks hop into the drawer together.</li>
           <li>Drag a sock sideways through its neighbor to swap them. A tap, then a tap on the sock beside it, does the same.</li>
-          <li>The next sock to step should match the one waiting. A match is folded in. A mismatch falls off and costs a life.</li>
+          <li>Put a matching pair in those two spots before the beat. A mismatch falls off and costs a life.</li>
         </ol>
-        <p>Tap the drawer to step early once the next sock is the right one. The beats get faster. Three mismatches and the drawer jams.</p>
+        <p>Press <kbd>Space</kbd>, or tap the drawer, to fold early once those two match. The beats get faster. Three mismatches and the drawer jams.</p>
         <button class="primary" id="start" type="button">Hang the line</button>
-        <p class="meta">Best <strong id="title-best" class="num">0</strong> · <kbd>P</kbd> pauses</p>
+        <p class="meta">Best <strong id="title-best" class="num">0</strong> · <kbd>Space</kbd> folds · <kbd>P</kbd> pauses</p>
       </article>
 
       <article class="card" id="pause-card" hidden>
         <p class="eyebrow">Paused</p>
         <h2>The line holds</h2>
-        <p>The drawer waits. Resume when the next sock matches the one about to step.</p>
+        <p>The drawer waits. Resume when the last two socks are a pair.</p>
         <button class="primary" id="resume" type="button">Resume</button>
       </article>
 
@@ -91,7 +91,7 @@
             <dd id="over-best" class="num">0</dd>
           </div>
         </dl>
-        <p class="reminder">Swap neighbors so the sock about to step matches the one waiting in the drawer.</p>
+        <p class="reminder">Swap neighbors so the last two socks match, then fold them with Space.</p>
         <button class="primary" id="again" type="button">Hang another line</button>
       </article>
     </div>

@@ -1,16 +1,16 @@
 # Sock Drawer
 
-An endless laundry game. Socks step along a clothesline toward a drawer, one peg at a time. You can only swap neighbors. The sock at the end hops into the drawer and waits for the next one to match it.
+An endless laundry game. Socks hang on a clothesline. You can only swap neighbors. On each beat the last two socks hop into the drawer together.
 
-The line deals itself. A new sock hops on at the far end with every step, and a match is always a few neighbor-swaps from the drawer. More patterns join as your streak grows, and the beats get shorter. Three mismatches jam the drawer.
+The line deals itself. Two new socks hop on at the far end with every fold, and a match is always a few neighbor-swaps from the drawer. More patterns join as your streak grows, and the beats get shorter. Three mismatches jam the drawer.
 
 ## Play
 
 - Drag a sock sideways through its neighbor to swap them.
 - Or tap a sock, then tap the one beside it.
-- A bead travels the line. When it reaches the drawer, every sock steps one peg closer.
-- The end sock hops in and waits. The next step folds a match, or drops a mismatch and costs a life.
-- Tap the drawer to take that step early once the next sock is right.
+- A bead travels the line. When it reaches the drawer, the last two socks leave together.
+- A matching pair is folded. A mismatch falls off and costs a life.
+- Press **Space**, or tap the drawer, to fold early once those two match.
 - **P** or **Escape** pauses.
 
 Your best score stays in the browser.

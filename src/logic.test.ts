@@ -5,6 +5,7 @@ import {
   createLaundry,
   createOpeningLine,
   difficulty,
+  helperIndex,
   inPlayEven,
   intakeSolvable,
   isIntakeMatch,
@@ -15,6 +16,7 @@ import {
   stepIsSavable,
   stepLaundry,
   swapAt,
+  unsettle,
   type Rng,
   type Sock,
 } from './logic.ts'
@@ -94,22 +96,23 @@ describe('a long line of laundry', () => {
     const ids = { next: 1 }
     let state = createLaundry(rng, ids)
     let folds = 0
+    let swaps = 0
     for (let beat = 0; beat < 48; beat++) {
       const diff = difficulty(folds)
       expect(state.line).toHaveLength(SLOT_COUNT)
       expect(inPlayEven(state)).toBe(true)
       expect(stepIsSavable(state, diff.window)).toBe(true)
+      if (helperIndex(state.line) >= 0) swaps += 1
       state = prepareStep(state)
       const outcome = stepLaundry(state, diff.window, diff.patterns, rng, ids)
-      if (outcome.judged) {
-        expect(outcome.matched).toBe(true)
-        folds += 1
-      } else {
-        expect(outcome.state.held?.id).toBe(outcome.leaving.id)
-      }
+      expect(outcome.matched).toBe(true)
+      expect(outcome.spawned[0]?.pattern).toBe(outcome.spawned[1]?.pattern)
+      expect(outcome.state.line).toHaveLength(SLOT_COUNT)
+      folds += 1
       state = outcome.state
     }
-    expect(folds).toBeGreaterThan(15)
+    expect(folds).toBe(48)
+    expect(swaps).toBeGreaterThan(20)
   })
 })
 
@@ -128,33 +131,73 @@ describe('difficulty', () => {
 })
 
 describe('deals that need a swap', () => {
-  it('does not hand over a fully sorted line', () => {
-    let unsorted = 0
+  it('never hands over a pair that is already together', () => {
     for (let seed = 1; seed <= 24; seed++) {
       const rng = rngFrom(seed)
       const ids = { next: 1 }
-      const line = createOpeningLine(rng, ids)
-      expect(isIntakeMatch(line)).toBe(true)
-      if (!isSortedPairs(line)) unsorted += 1
+      const state = createLaundry(rng, ids)
+      expect(isIntakeMatch(state.line)).toBe(false)
+      expect(stepIsSavable(state, 3)).toBe(true)
+      expect(helperIndex(state.line)).toBeGreaterThanOrEqual(0)
+      expect(inPlayEven(state)).toBe(true)
     }
-    expect(unsorted).toBeGreaterThan(10)
+  })
+
+  it('keeps a finished fold from setting up the next pair', () => {
+    const rng = rngFrom(9)
+    const ids = { next: 1 }
+    const folded = stepLaundry(prepareStep(createLaundry(rng, ids)), 3, 3, rng, ids)
+    expect(folded.matched).toBe(true)
+    expect(isIntakeMatch(folded.state.line)).toBe(false)
+    expect(stepIsSavable(folded.state, 3)).toBe(true)
+    expect(helperIndex(folded.state.line)).toBeGreaterThanOrEqual(0)
+    const next = stepLaundry(prepareStep(folded.state), 3, 3, rng, ids)
+    expect(next.matched).toBe(true)
+  })
+})
+
+describe('unsettle', () => {
+  it('pulls an adjacent partner back into the window', () => {
+    const line: Sock[] = [
+      { id: 1, pattern: 0 },
+      { id: 2, pattern: 1 },
+      { id: 3, pattern: 1 },
+      { id: 4, pattern: 0 },
+      { id: 5, pattern: 2 },
+      { id: 6, pattern: 2 },
+    ]
+    const next = unsettle(line, 3)
+    expect(isIntakeMatch(next)).toBe(false)
+    expect(intakeSolvable(next, 3)).toBe(true)
+    expect(next[5]?.pattern).toBe(2)
+    expect(patterns(line)).toEqual([0, 1, 1, 0, 2, 2])
   })
 })
 
 describe('stepLaundry', () => {
-  it('parks the end sock, then folds its partner on the next step', () => {
-    const rng = rngFrom(4)
-    const ids = { next: 1 }
-    const opened = createLaundry(rng, ids)
-    const parked = stepLaundry(opened, 3, 3, rng, ids)
-    expect(parked.judged).toBe(false)
-    expect(parked.state.held?.pattern).toBe(parked.leaving.pattern)
-    expect(parked.state.line[SLOT_COUNT - 1]?.pattern).toBe(parked.leaving.pattern)
-    const folded = stepLaundry(parked.state, 3, 3, rng, ids)
-    expect(folded.judged).toBe(true)
+  it('folds the last two together, and drops them if the player never swaps', () => {
+    const carefulRng = rngFrom(4)
+    const carefulIds = { next: 1 }
+    const opened = createLaundry(carefulRng, carefulIds)
+    expect(isIntakeMatch(opened.line)).toBe(false)
+    const prepared = prepareStep(opened)
+    expect(isIntakeMatch(prepared.line)).toBe(true)
+    const folded = stepLaundry(prepared, 3, 3, carefulRng, carefulIds)
     expect(folded.matched).toBe(true)
-    expect(folded.state.held).toBeNull()
+    expect(folded.left.pattern).toBe(folded.right.pattern)
+    expect(folded.spawned[0]?.pattern).toBe(folded.spawned[1]?.pattern)
+    expect(folded.state.line).toHaveLength(SLOT_COUNT)
+    expect(isIntakeMatch(folded.state.line)).toBe(false)
     expect(inPlayEven(folded.state)).toBe(true)
+
+    const idleRng = rngFrom(4)
+    const idleIds = { next: 1 }
+    const dropped = stepLaundry(createLaundry(idleRng, idleIds), 3, 3, idleRng, idleIds)
+    expect(dropped.matched).toBe(false)
+    expect(dropped.left.pattern).not.toBe(dropped.right.pattern)
+    expect(inPlayEven(dropped.state)).toBe(true)
+    expect(stepIsSavable(dropped.state, 3)).toBe(true)
+    expect(isIntakeMatch(dropped.state.line)).toBe(false)
   })
 
   it('reties the orphans when a mismatch falls off', () => {
@@ -173,13 +216,6 @@ describe('stepLaundry', () => {
     expect(tied.filter((sock) => sock.pattern === 2)).toHaveLength(0)
   })
 })
-
-function isSortedPairs(line: readonly Sock[]): boolean {
-  for (let index = 0; index < line.length; index += 2) {
-    if (line[index]?.pattern !== line[index + 1]?.pattern) return false
-  }
-  return true
-}
 
 describe('pointsForCombo', () => {
   it('pays more for a longer streak', () => {

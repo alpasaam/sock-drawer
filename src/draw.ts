@@ -45,8 +45,8 @@ export type Frame = {
   timer: number
   urgent: boolean
   ready: boolean
-  waiting: boolean
   actionLabel: string
+  shortcut: string
   nextLabel: string
   shake: number
   open: number
@@ -233,11 +233,11 @@ function beatBead(ctx: CanvasRenderingContext2D, frame: Frame): void {
 function intakeWash(ctx: CanvasRenderingContext2D, frame: Frame): void {
   const { layout } = frame
   const right = layout.slotX[5]
-  const left = frame.waiting ? right : layout.slotX[4]
+  const left = layout.slotX[4]
   if (left == null || right == null) return
   const x = (left + right) / 2
   const y = layout.slotY[5] ?? layout.lineY
-  const radius = frame.waiting ? layout.step * 0.85 : layout.step * 1.15
+  const radius = layout.step * 1.15
   const color = frame.ready ? 'rgba(80, 150, 90, 0.22)' : 'rgba(226, 91, 74, 0.1)'
   const wash = ctx.createRadialGradient(x, y + layout.sockH * 0.35, 8, x, y + layout.sockH * 0.35, radius)
   wash.addColorStop(0, color)
@@ -310,6 +310,12 @@ function drawerFront(ctx: CanvasRenderingContext2D, frame: Frame): void {
     ctx.textAlign = 'center'
     ctx.fillText(frame.actionLabel, knob.x, knob.y + 36)
   }
+  if (frame.shortcut) {
+    ctx.fillStyle = '#6a4a32'
+    ctx.font = '600 12px Outfit, "Avenir Next", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText(frame.shortcut, knob.x, knob.y + 54)
+  }
 }
 
 function drawSock(
@@ -333,6 +339,14 @@ function drawSock(
   ctx.globalAlpha = sock.alpha
   ctx.translate(sock.x, sock.y - sock.lift * 12 - hop)
   ctx.rotate(sway * face)
+
+  if (sock.glow === 'pair') {
+    ctx.strokeStyle = 'rgba(47, 143, 107, 0.95)'
+    ctx.lineWidth = Math.max(2.5, w * 0.06)
+    ctx.beginPath()
+    ctx.ellipse(face * w * 0.12, h * 0.52, w * 0.72, h * 0.5, 0, 0, Math.PI * 2)
+    ctx.stroke()
+  }
 
   if (sock.glow === 'ready' || sock.glow === 'next') {
     ctx.fillStyle = sock.glow === 'ready' ? 'rgba(47, 143, 107, 0.2)' : 'rgba(226, 91, 74, 0.1)'
