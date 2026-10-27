@@ -22,6 +22,12 @@ export class LaundryAudio {
     if (ctx.state !== 'running') void ctx.resume()
   }
 
+  tick(): void {
+    const ctx = this.ctx
+    if (!ctx || this.muted) return
+    this.tone(ctx.currentTime, 520, 0.05, 'triangle', 0.035)
+  }
+
   swap(): void {
     const ctx = this.ctx
     if (!ctx || this.muted) return

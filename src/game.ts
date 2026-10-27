@@ -10,11 +10,11 @@ import {
 } from './draw.ts'
 import {
   LIVES,
-  afterFold,
-  createOpeningLine,
+  createLaundry,
   difficulty,
   isIntakeMatch,
   pointsForCombo,
+  stepLaundry,
   swapAt,
   type IdGen,
   type Sock,
@@ -67,6 +67,9 @@ export class Game {
 
   private phase: Phase = 'title'
   private line: Sock[] = []
+  private held: Sock | null = null
+  private pending: number | null = null
+  private parked: Actor | null = null
   private actors: Actor[] = []
   private ghosts: Ghost[] = []
   private layout: Layout = computeLayout(800, 600)
@@ -93,7 +96,10 @@ export class Game {
     if (!ctx) throw new Error('Canvas is unavailable')
     this.canvas = canvas
     this.ctx = ctx
-    this.line = createOpeningLine(Math.random, this.ids)
+    const laundry = createLaundry(Math.random, this.ids)
+    this.line = laundry.line
+    this.held = laundry.held
+    this.pending = laundry.pending
     this.bindUi()
     this.bindPointer()
     this.syncHud()
@@ -142,7 +148,11 @@ export class Game {
     this.audio.unlock()
     if (fresh || this.phase === 'over') {
       this.ids.next = 1
-      this.line = createOpeningLine(Math.random, this.ids)
+      const laundry = createLaundry(Math.random, this.ids)
+      this.line = laundry.line
+      this.held = laundry.held
+      this.pending = laundry.pending
+      this.parked = null
       this.actors = []
       this.ghosts = []
       this.snapped = false
@@ -183,7 +193,7 @@ export class Game {
     this.resize()
     if (this.phase === 'play' && this.lock <= 0) {
       this.timeLeft -= dt
-      if (this.timeLeft <= 0) this.resolve(true)
+      if (this.timeLeft <= 0) this.stepNow(true)
     }
     if (this.lock > 0) {
       this.lock -= dt
@@ -203,65 +213,84 @@ export class Game {
     this.paint(now)
   }
 
-  private resolve(fromTimer: boolean): void {
-    const matched = isIntakeMatch(this.line)
-    if (!matched && !fromTimer) {
+  private stepNow(forced: boolean): void {
+    const nextSock = this.line[this.line.length - 1]
+    if (!nextSock) return
+    const wouldMatch = this.held != null && nextSock.pattern === this.held.pattern
+    if (!forced && this.held && !wouldMatch) {
       this.shake = 3
       this.audio.nudge()
-      this.note('Not a pair yet')
+      this.note('Not yet')
       return
     }
-    if (!matched) {
+
+    const leavingActor = this.actors.find((actor) => actor.sock.id === nextSock.id) ?? null
+    const waiting = this.parked
+    const diff = difficulty(this.folds)
+    const outcome = stepLaundry(
+      { line: this.line, held: this.held, pending: this.pending },
+      diff.window,
+      diff.patterns,
+      Math.random,
+      this.ids,
+    )
+    this.line = outcome.state.line
+    this.held = outcome.state.held
+    this.pending = outcome.state.pending
+    this.selectedId = null
+    this.drag = null
+    this.lock = this.reduceMotion ? 180 : 460
+
+    if (!outcome.judged) {
+      this.parked = leavingActor
+        ? { ...leavingActor, sock: outcome.leaving, slot: -1, bounce: 0 }
+        : null
+      this.audio.tick()
+    } else if (outcome.matched) {
+      this.combo += 1
+      this.folds += 1
+      this.bestCombo = Math.max(this.bestCombo, this.combo)
+      const gained = pointsForCombo(this.combo)
+      this.score += gained
+      if (this.score > this.best) {
+        this.best = this.score
+        writeBest(this.best)
+      }
+      this.note(`+${gained}`)
+      this.audio.fold()
+      this.releaseSock(waiting, true)
+      this.releaseSock(leavingActor, true)
+      this.parked = null
+    } else {
       this.combo = 0
       this.lives -= 1
       this.audio.reject()
       this.shake = 8
       this.note('Not a pair')
-      this.bounceIntake()
-      this.lock = 480
-      this.timeLeft = difficulty(this.folds).intervalMs
-      this.selectedId = null
-      this.drag = null
+      this.releaseSock(waiting, false)
+      this.releaseSock(leavingActor, false)
+      this.parked = null
       if (this.lives <= 0) this.pendingOver = true
-      this.syncHud()
-      return
     }
 
-    const count = this.line.length
-    const taken = [this.line[count - 2], this.line[count - 1]].filter((sock): sock is Sock => !!sock)
-    const spots = taken.map((sock) => this.actors.find((actor) => actor.sock.id === sock.id))
-    this.combo += 1
-    this.folds += 1
-    this.bestCombo = Math.max(this.bestCombo, this.combo)
-    const gained = pointsForCombo(this.combo)
-    this.score += gained
-    this.note(`+${gained}`)
-    if (this.score > this.best) {
-      this.best = this.score
-      writeBest(this.best)
-    }
-    const diff = difficulty(this.folds)
-    this.line = afterFold(this.line, diff.patterns, diff.window, diff.scramble, Math.random, this.ids)
-    this.timeLeft = diff.intervalMs
-    this.lock = 420
-    this.selectedId = null
-    this.drag = null
-    this.audio.fold()
-    for (const actor of spots) {
-      if (!actor) continue
-      this.ghosts.push({
-        pattern: actor.sock.pattern,
-        face: faceFor(actor.sock.id),
-        x: actor.x,
-        y: actor.y,
-        vx: (this.layout.mouth.x + this.layout.mouth.w * 0.5 - actor.x) / 280,
-        vy: 0.22,
-        life: 420,
-        max: 420,
-      })
-    }
+    this.timeLeft = difficulty(this.folds).intervalMs
     this.ensureActors(false)
     this.syncHud()
+  }
+
+  private releaseSock(actor: Actor | null, intoDrawer: boolean): void {
+    if (!actor) return
+    const mouthX = this.layout.mouth.x + this.layout.mouth.w * 0.45
+    this.ghosts.push({
+      pattern: actor.sock.pattern,
+      face: faceFor(actor.sock.id),
+      x: actor.x,
+      y: actor.y,
+      vx: intoDrawer ? (mouthX - actor.x) / 280 : 0.04,
+      vy: intoDrawer ? 0.16 : 0.42,
+      life: 460,
+      max: 460,
+    })
   }
 
   private finish(): void {
@@ -286,7 +315,7 @@ export class Game {
     const point = this.eventPoint(event)
     const actor = this.hitSock(point.x, point.y)
     if (!actor) {
-      if (this.hitDrawer(point.x, point.y)) this.resolve(false)
+      if (this.hitDrawer(point.x, point.y)) this.stepNow(false)
       else this.selectedId = null
       return
     }
@@ -372,14 +401,6 @@ export class Game {
     })
   }
 
-  private bounceIntake(): void {
-    const count = this.line.length
-    for (const sock of [this.line[count - 2], this.line[count - 1]]) {
-      const actor = sock && this.actors.find((item) => item.sock.id === sock.id)
-      if (actor) actor.bounce = 1
-    }
-  }
-
   private ensureActors(snap: boolean): void {
     const byId = new Map(this.actors.map((actor) => [actor.sock.id, actor]))
     const next: Actor[] = []
@@ -423,6 +444,12 @@ export class Game {
       if (!dragging) actor.x += (targetX - actor.x) * blend
       actor.y += (targetY - actor.y) * blend
     }
+    if (this.parked) {
+      const targetX = this.layout.mouth.x + this.layout.mouth.w * 0.42
+      const targetY = this.layout.mouth.y + 6
+      this.parked.x += (targetX - this.parked.x) * blend
+      this.parked.y += (targetY - this.parked.y) * blend
+    }
   }
 
   private stepGhosts(dt: number): void {
@@ -436,7 +463,8 @@ export class Game {
   }
 
   private paint(now: number): void {
-    const ready = isIntakeMatch(this.line)
+    const waiting = this.held != null
+    const partnerReady = this.partnerReady()
     const interval = difficulty(this.folds).intervalMs
     const timer = clamp(this.timeLeft / interval, 0, 1)
     const socks: SockDraw[] = this.actors.map((actor) => ({
@@ -446,10 +474,23 @@ export class Game {
       y: actor.y,
       lift: this.selectedId === actor.sock.id || this.drag?.sockId === actor.sock.id ? 1 : 0,
       bounce: actor.bounce,
-      glow: glowFor(this.line, actor.slot, ready),
+      glow: glowFor(this.line.length, actor.slot, waiting, partnerReady),
       scale: 1,
       alpha: 1,
     }))
+    if (this.parked) {
+      socks.push({
+        id: this.parked.sock.id,
+        pattern: this.parked.sock.pattern,
+        x: this.parked.x,
+        y: this.parked.y,
+        lift: 0,
+        bounce: 0,
+        glow: partnerReady ? 'ready' : 'next',
+        scale: 0.78,
+        alpha: 1,
+      })
+    }
     const ghosts: GhostDraw[] = this.ghosts.map((ghost) => ({
       pattern: ghost.pattern,
       face: ghost.face,
@@ -464,17 +505,26 @@ export class Game {
       socks,
       ghosts,
       timer: this.phase === 'title' ? 1 : timer,
-      urgent: this.phase === 'play' && timer < 0.28 && !ready,
-      ready: this.phase === 'play' && ready,
+      urgent: this.phase === 'play' && timer < 0.28 && !partnerReady,
+      ready: this.phase === 'play' && partnerReady,
+      waiting,
+      actionLabel: this.phase === 'play' && partnerReady ? (waiting ? 'Fold' : 'Step') : '',
+      nextLabel: this.phase === 'play' && this.folds < 2 ? (partnerReady ? (waiting ? 'Match waiting' : 'Ready to step') : 'Next step') : '',
       shake: this.shake,
       open: this.open,
-      showNextLabel: this.phase === 'play' && this.folds < 3,
       reduceMotion: this.reduceMotion,
     }
     this.ctx.clearRect(0, 0, this.layout.w, this.layout.h)
     paint(this.ctx, frame)
     this.paintFloaters()
-    this.paintHint(ready)
+    this.paintHint(waiting, partnerReady)
+  }
+
+  private partnerReady(): boolean {
+    const end = this.line[this.line.length - 1]
+    if (!end) return false
+    if (this.held) return end.pattern === this.held.pattern
+    return isIntakeMatch(this.line)
   }
 
   private note(text: string): void {
@@ -500,16 +550,22 @@ export class Game {
     ctx.restore()
   }
 
-  private paintHint(ready: boolean): void {
+  private paintHint(waiting: boolean, partnerReady: boolean): void {
     const hint = byId('hint')
-    if (this.phase !== 'play' || this.folds >= 3) {
+    if (this.phase !== 'play' || this.folds >= 2) {
       hint.hidden = true
       return
     }
     hint.hidden = false
-    hint.textContent = ready
-      ? 'These two match. Tap the drawer to fold them in.'
-      : 'Drag a sock through its neighbor. The two on the right go in next.'
+    if (!waiting && partnerReady) {
+      hint.textContent = 'The line steps on the beat. These two match, so let them walk in.'
+      return
+    }
+    if (waiting && partnerReady) {
+      hint.textContent = 'That sock is waiting in the drawer. The next step folds its match.'
+      return
+    }
+    hint.textContent = 'Drag a sock through its neighbor before the line steps.'
   }
 
   private resize(): void {
@@ -589,9 +645,9 @@ export class Game {
   }
 }
 
-function glowFor(line: readonly Sock[], slot: number, ready: boolean): SockDraw['glow'] {
-  const count = line.length
-  if (slot >= count - 2) return ready ? 'ready' : 'next'
+function glowFor(count: number, slot: number, waiting: boolean, partnerReady: boolean): SockDraw['glow'] {
+  if (slot === count - 1) return partnerReady ? 'ready' : 'next'
+  if (!waiting && slot === count - 2) return partnerReady ? 'ready' : 'next'
   return 'none'
 }
 

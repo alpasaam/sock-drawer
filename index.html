@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#8ecae6" />
     <meta
       name="description"
-      content="Sock Drawer is an endless laundry game. Swap neighboring socks so each pair matches before the drawer takes them."
+      content="Sock Drawer is an endless laundry game. The clothesline steps toward the drawer. Swap neighbors so each pair matches."
     />
     <title>Sock Drawer</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -50,13 +50,13 @@
       <article class="card" id="title-card">
         <p class="eyebrow">A clothesline</p>
         <h1>Sock Drawer</h1>
-        <p class="lead">The drawer takes socks two at a time. Only neighbors can trade places.</p>
+        <p class="lead">The clothesline steps toward the drawer. Only neighbors can trade places.</p>
         <ol>
-          <li>The two socks closest to the drawer are the next pair in.</li>
+          <li>On each beat, every sock steps one peg closer. The one at the end hops into the drawer and waits.</li>
           <li>Drag a sock sideways through its neighbor to swap them. A tap, then a tap on the sock beside it, does the same.</li>
-          <li>When they match, tap the drawer to fold them in. If the timer runs out on a mismatch, it costs a life.</li>
+          <li>The next sock to step should match the one waiting. A match is folded in. A mismatch falls off and costs a life.</li>
         </ol>
-        <p>The line does not end. It speeds up, and new patterns join the laundry. Three mismatches and the drawer jams.</p>
+        <p>Tap the drawer to step early once the next sock is the right one. The beats get faster. Three mismatches and the drawer jams.</p>
         <button class="primary" id="start" type="button">Hang the line</button>
         <p class="meta">Best <strong id="title-best" class="num">0</strong> · <kbd>P</kbd> pauses</p>
       </article>
@@ -64,7 +64,7 @@
       <article class="card" id="pause-card" hidden>
         <p class="eyebrow">Paused</p>
         <h2>The line holds</h2>
-        <p>The drawer waits. Resume when you know which two belong together.</p>
+        <p>The drawer waits. Resume when the next sock matches the one about to step.</p>
         <button class="primary" id="resume" type="button">Resume</button>
       </article>
 
@@ -91,7 +91,7 @@
             <dd id="over-best" class="num">0</dd>
           </div>
         </dl>
-        <p class="reminder">Swap neighbors so the two socks by the drawer match, then fold them in.</p>
+        <p class="reminder">Swap neighbors so the sock about to step matches the one waiting in the drawer.</p>
         <button class="primary" id="again" type="button">Hang another line</button>
       </article>
     </div>

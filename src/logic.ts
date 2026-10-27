@@ -150,7 +150,7 @@ export function difficulty(folds: number): Difficulty {
   const safeFolds = Math.max(0, folds)
   const patterns = safeFolds < 6 ? 3 : safeFolds < 14 ? 4 : safeFolds < 24 ? 5 : PATTERN_COUNT
   const window = Math.min(SLOT_COUNT, 3 + Math.floor(safeFolds / 6))
-  const intervalMs = Math.max(1600, 5200 - safeFolds * 80)
+  const intervalMs = Math.max(1100, 2800 - safeFolds * 45)
   const scramble = safeFolds < 4 ? 4 : safeFolds < 12 ? 6 : 8
   return { window, intervalMs, patterns, scramble }
 }
@@ -169,36 +169,159 @@ export function createOpeningLine(rng: Rng, ids: IdGen): Sock[] {
   return bubblePartnerToIntake(scramble(line, 12, rng))
 }
 
-export function spawnPair(
-  existing: readonly Sock[],
-  patterns: number,
-  rng: Rng,
-  ids: IdGen,
-): [Sock, Sock] {
-  const used = new Set(existing.map((sock) => sock.pattern))
-  const available = Math.max(2, Math.min(PATTERN_COUNT, patterns))
-  const free: number[] = []
-  const all: number[] = []
-  for (let pattern = 0; pattern < available; pattern++) {
-    all.push(pattern)
-    if (!used.has(pattern)) free.push(pattern)
-  }
-  const pool = free.length > 0 ? free : all
-  const pattern = pool[Math.floor(rng() * pool.length)] ?? 0
-  return [makeSock(pattern, ids), makeSock(pattern, ids)]
+export type Laundry = {
+  line: Sock[]
+  /** The sock that stepped into the drawer and is waiting for its partner. */
+  held: Sock | null
+  /** Pattern of a sock promised on the next step, so pairs stay even. */
+  pending: number | null
 }
 
-/** Remove the folded pair and deal two new socks onto the far end, then keep the next fold solvable. */
-export function afterFold(
-  line: readonly Sock[],
-  patterns: number,
+export type StepOutcome = {
+  state: Laundry
+  leaving: Sock
+  spawned: Sock
+  /** True when a sock was already waiting and this step completes the pair. */
+  judged: boolean
+  matched: boolean
+}
+
+export function createLaundry(rng: Rng, ids: IdGen): Laundry {
+  return { line: createOpeningLine(rng, ids), held: null, pending: null }
+}
+
+/** Counts on the line, in the drawer mouth, and promised for the next step. */
+export function inPlayEven(state: Laundry): boolean {
+  const counts = new Map<number, number>()
+  const add = (pattern: number) => counts.set(pattern, (counts.get(pattern) ?? 0) + 1)
+  for (const sock of state.line) add(sock.pattern)
+  if (state.held) add(state.held.pattern)
+  if (state.pending != null) add(state.pending)
+  for (const count of counts.values()) {
+    if (count % 2 !== 0) return false
+  }
+  return true
+}
+
+/** The next step can be made into a match by neighbor swaps inside the window. */
+export function stepIsSavable(state: Laundry, window: number): boolean {
+  if (!state.held) return intakeSolvable(state.line, window)
+  const count = state.line.length
+  const span = Math.max(1, Math.min(window, count))
+  const start = count - span
+  return state.line.slice(start).some((sock) => sock.pattern === state.held?.pattern)
+}
+
+/** Slide the nearest sock of `pattern` onto the last peg. */
+export function bubblePatternToEnd(line: readonly Sock[], pattern: number): Sock[] {
+  const next = [...line]
+  let index = -1
+  for (let cursor = next.length - 1; cursor >= 0; cursor--) {
+    if (next[cursor]?.pattern === pattern) {
+      index = cursor
+      break
+    }
+  }
+  if (index < 0) return next
+  while (index < next.length - 1) {
+    const left = next[index]
+    const right = next[index + 1]
+    if (!left || !right) break
+    next[index] = right
+    next[index + 1] = left
+    index += 1
+  }
+  return next
+}
+
+/** Put the line into the arrangement a careful player would step from. */
+export function prepareStep(state: Laundry): Laundry {
+  if (state.held) return { ...state, line: bubblePatternToEnd(state.line, state.held.pattern) }
+  return { ...state, line: bubblePartnerToIntake(state.line) }
+}
+
+/**
+ * Give the two orphaned socks a shared pattern after a mismatched pair leaves.
+ * The fallen socks are already off the line.
+ */
+export function retie(line: readonly Sock[], fallenA: Sock, fallenB: Sock): Sock[] {
+  if (fallenA.pattern === fallenB.pattern) return [...line]
+  const next = [...line]
+  let donorIndex = -1
+  for (let index = next.length - 1; index >= 0; index--) {
+    if (next[index]?.pattern === fallenB.pattern) {
+      donorIndex = index
+      break
+    }
+  }
+  const donor = next[donorIndex]
+  if (!donor) return next
+  next[donorIndex] = { ...donor, pattern: fallenA.pattern }
+  return next
+}
+
+/**
+ * One beat. The last sock steps off, a new sock hops on the far end.
+ * The first step only parks the sock in the drawer. The second step folds a match or drops a mismatch.
+ */
+export function stepLaundry(
+  state: Laundry,
   window: number,
-  scrambleSwaps: number,
+  patterns: number,
   rng: Rng,
   ids: IdGen,
-): Sock[] {
-  const rest = line.slice(0, -2)
-  const [left, right] = spawnPair(rest, patterns, rng, ids)
-  const mixed = scramble([left, right, ...rest], scrambleSwaps, rng)
-  return repairIntake(mixed, window)
+): StepOutcome {
+  const count = state.line.length
+  const leaving = state.line[count - 1]
+  if (!leaving) {
+    throw new Error('The line is empty')
+  }
+  const rest = state.line.slice(0, -1)
+  const spawned = takeSpawn(rest, state.pending, patterns, rng, ids)
+  let line = [spawned.sock, ...rest]
+
+  if (!state.held) {
+    return {
+      state: { line, held: leaving, pending: spawned.pending },
+      leaving,
+      spawned: spawned.sock,
+      judged: false,
+      matched: false,
+    }
+  }
+
+  const matched = state.held.pattern === leaving.pattern
+  if (!matched) line = retie(line, state.held, leaving)
+  line = repairIntake(line, window)
+  return {
+    state: { line, held: null, pending: spawned.pending },
+    leaving,
+    spawned: spawned.sock,
+    judged: true,
+    matched,
+  }
+}
+
+function takeSpawn(
+  existing: readonly Sock[],
+  pending: number | null,
+  patterns: number,
+  rng: Rng,
+  ids: IdGen,
+): { sock: Sock; pending: number | null } {
+  if (pending != null) return { sock: makeSock(pending, ids), pending: null }
+  const pattern = pickPattern(existing, patterns, rng)
+  return { sock: makeSock(pattern, ids), pending: pattern }
+}
+
+function pickPattern(existing: readonly Sock[], patterns: number, rng: Rng): number {
+  const available = Math.max(2, Math.min(PATTERN_COUNT, patterns))
+  const counts = Array.from({ length: available }, () => 0)
+  for (const sock of existing) {
+    const pattern = sock.pattern
+    if (pattern >= 0 && pattern < available) counts[pattern] = (counts[pattern] ?? 0) + 1
+  }
+  const least = Math.min(...counts)
+  const pool = counts.flatMap((count, pattern) => (count === least ? [pattern] : []))
+  return pool[Math.floor(rng() * pool.length)] ?? 0
 }

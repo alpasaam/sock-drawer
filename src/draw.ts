@@ -41,13 +41,15 @@ export type Frame = {
   time: number
   socks: SockDraw[]
   ghosts: GhostDraw[]
-  /** 1 is a full timer, 0 is the deadline. */
+  /** 1 is a full beat, 0 is the step. */
   timer: number
   urgent: boolean
   ready: boolean
+  waiting: boolean
+  actionLabel: string
+  nextLabel: string
   shake: number
   open: number
-  showNextLabel: boolean
   reduceMotion: boolean
 }
 
@@ -143,6 +145,7 @@ export function paint(ctx: CanvasRenderingContext2D, frame: Frame): void {
   }
   lineRope(ctx, layout)
   pins(ctx, frame)
+  beatBead(ctx, frame)
   drawerFront(ctx, frame)
   ctx.restore()
 }
@@ -213,14 +216,28 @@ function lineRope(ctx: CanvasRenderingContext2D, layout: Layout): void {
   ctx.stroke()
 }
 
+function beatBead(ctx: CanvasRenderingContext2D, frame: Frame): void {
+  const { layout } = frame
+  const t = 1 - Math.min(1, Math.max(0, frame.timer))
+  const x = layout.lineLeft + (layout.lineRight - layout.lineLeft) * t
+  const y = linePoint(layout.lineLeft, layout.lineRight, layout.lineY, layout.sag, x)
+  ctx.fillStyle = frame.urgent ? '#e25b4a' : '#e0b56a'
+  ctx.beginPath()
+  ctx.arc(x, y, 6.5, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = '#8a5a32'
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+}
+
 function intakeWash(ctx: CanvasRenderingContext2D, frame: Frame): void {
   const { layout } = frame
-  const left = layout.slotX[4]
   const right = layout.slotX[5]
+  const left = frame.waiting ? right : layout.slotX[4]
   if (left == null || right == null) return
   const x = (left + right) / 2
-  const y = ((layout.slotY[4] ?? layout.lineY) + (layout.slotY[5] ?? layout.lineY)) / 2
-  const radius = layout.step * 1.15
+  const y = layout.slotY[5] ?? layout.lineY
+  const radius = frame.waiting ? layout.step * 0.85 : layout.step * 1.15
   const color = frame.ready ? 'rgba(80, 150, 90, 0.22)' : 'rgba(226, 91, 74, 0.1)'
   const wash = ctx.createRadialGradient(x, y + layout.sockH * 0.35, 8, x, y + layout.sockH * 0.35, radius)
   wash.addColorStop(0, color)
@@ -230,15 +247,16 @@ function intakeWash(ctx: CanvasRenderingContext2D, frame: Frame): void {
   ctx.arc(x, y + layout.sockH * 0.35, radius, 0, Math.PI * 2)
   ctx.fill()
 
-  if (!frame.showNextLabel) return
+  if (!frame.nextLabel) return
   ctx.fillStyle = frame.ready ? '#2f6b45' : '#8a4b32'
   ctx.font = '600 13px Outfit, "Avenir Next", sans-serif'
   ctx.textAlign = 'center'
-  ctx.fillText(frame.ready ? 'Ready to fold' : 'Next pair', x, y - 28)
+  ctx.fillText(frame.nextLabel, x, y - 28)
 }
 
 function pins(ctx: CanvasRenderingContext2D, frame: Frame): void {
   for (const sock of frame.socks) {
+    if (sock.scale < 0.9) continue
     const y = sock.y - sock.lift * 10
     drawPin(ctx, sock.x, y)
   }
@@ -286,11 +304,11 @@ function drawerFront(ctx: CanvasRenderingContext2D, frame: Frame): void {
   ctx.arc(knob.x, knob.y, 8, 0, Math.PI * 2)
   ctx.fill()
 
-  if (frame.ready) {
+  if (frame.actionLabel) {
     ctx.fillStyle = '#2f6b45'
     ctx.font = '600 14px Outfit, "Avenir Next", sans-serif'
     ctx.textAlign = 'center'
-    ctx.fillText('Fold', knob.x, knob.y + 36)
+    ctx.fillText(frame.actionLabel, knob.x, knob.y + 36)
   }
 }
 
