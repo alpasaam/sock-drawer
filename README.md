@@ -28,3 +28,13 @@ Open http://127.0.0.1:47231
 npm test
 npm run build
 ```
+
+## Publish to socks.saamn.dev
+
+saamn.dev stays as it is. This game publishes separately, from a public GitHub repo, on every push to `main`.
+
+1. Create `github.com/alpasaam/sock-drawer` and push this project to it.
+2. In that repo, open Settings, then Pages. Set the source to GitHub Actions and the custom domain to `socks.saamn.dev`.
+3. In Porkbun, on `saamn.dev`, add a CNAME record. Host `socks`, answer `alpasaam.github.io`.
+
+The game is then at https://socks.saamn.dev. Link to it from the portfolio.
