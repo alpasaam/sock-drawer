@@ -13,7 +13,6 @@ import {
   prepareStep,
   repairIntake,
   retie,
-  stepIsSavable,
   stepLaundry,
   swapAt,
   unsettle,
@@ -91,28 +90,29 @@ describe('repairIntake', () => {
 })
 
 describe('a long line of laundry', () => {
-  it('steps in pairs a careful player can always fold', () => {
+  it('slides survivors toward the drawer and keeps pairs even', () => {
     const rng = rngFrom(11)
     const ids = { next: 1 }
     let state = createLaundry(rng, ids)
     let folds = 0
-    let swaps = 0
-    for (let beat = 0; beat < 48; beat++) {
+    let differentArrivals = 0
+    for (let beat = 0; beat < 36; beat++) {
       const diff = difficulty(folds)
       expect(state.line).toHaveLength(SLOT_COUNT)
+      expect(state.incoming[0]?.pattern).not.toBe(state.incoming[1]?.pattern)
       expect(inPlayEven(state)).toBe(true)
-      expect(stepIsSavable(state, diff.window)).toBe(true)
-      if (helperIndex(state.line) >= 0) swaps += 1
-      state = prepareStep(state)
-      const outcome = stepLaundry(state, diff.window, diff.patterns, rng, ids)
-      expect(outcome.matched).toBe(true)
-      expect(outcome.spawned[0]?.pattern).toBe(outcome.spawned[1]?.pattern)
-      expect(outcome.state.line).toHaveLength(SLOT_COUNT)
-      folds += 1
+      if (!isIntakeMatch(state.line) && helperIndex(state.line) >= 0) state = prepareStep(state)
+      const survivors = state.line.slice(0, -2).map((sock) => sock.id)
+      const ready = isIntakeMatch(state.line)
+      const outcome = stepLaundry(state, diff.patterns, rng, ids)
+      expect(outcome.matched).toBe(ready)
+      expect(outcome.state.line.slice(2).map((sock) => sock.id)).toEqual(survivors)
+      if (outcome.matched) folds += 1
+      if (outcome.spawned[0]?.pattern !== outcome.spawned[1]?.pattern) differentArrivals += 1
       state = outcome.state
     }
-    expect(folds).toBe(48)
-    expect(swaps).toBeGreaterThan(20)
+    expect(folds).toBeGreaterThan(8)
+    expect(differentArrivals).toBeGreaterThan(24)
   })
 })
 
@@ -131,28 +131,36 @@ describe('difficulty', () => {
 })
 
 describe('deals that need a swap', () => {
-  it('never hands over a pair that is already together', () => {
-    for (let seed = 1; seed <= 24; seed++) {
-      const rng = rngFrom(seed)
-      const ids = { next: 1 }
-      const state = createLaundry(rng, ids)
-      expect(isIntakeMatch(state.line)).toBe(false)
-      expect(stepIsSavable(state, 3)).toBe(true)
-      expect(helperIndex(state.line)).toBeGreaterThanOrEqual(0)
-      expect(inPlayEven(state)).toBe(true)
+  it('does not hand the same drag back every beat', () => {
+    const rng = rngFrom(8)
+    const ids = { next: 1 }
+    let state = createLaundry(rng, ids)
+    let misses = 0
+    const partnerSlots: number[] = []
+    for (let beat = 0; beat < 16; beat++) {
+      const end = state.line[state.line.length - 1]
+      partnerSlots.push(state.line.findIndex((sock, index) => index < state.line.length - 1 && sock.pattern === end?.pattern))
+      let line = swapAt(state.line, 0)
+      line = swapAt(line, 1)
+      state = { ...state, line }
+      const outcome = stepLaundry(state, difficulty(0).patterns, rng, ids)
+      if (!outcome.matched) misses += 1
+      state = outcome.state
     }
+    expect(misses).toBeGreaterThan(4)
+    expect(new Set(partnerSlots).size).toBeGreaterThan(1)
   })
 
-  it('keeps a finished fold from setting up the next pair', () => {
+  it('keeps survivor order when a pair is folded', () => {
     const rng = rngFrom(9)
     const ids = { next: 1 }
-    const folded = stepLaundry(prepareStep(createLaundry(rng, ids)), 3, 3, rng, ids)
+    const opened = prepareStep(createLaundry(rng, ids))
+    const survivors = opened.line.slice(0, -2).map((sock) => sock.id)
+    const folded = stepLaundry(opened, 3, rng, ids)
     expect(folded.matched).toBe(true)
-    expect(isIntakeMatch(folded.state.line)).toBe(false)
-    expect(stepIsSavable(folded.state, 3)).toBe(true)
-    expect(helperIndex(folded.state.line)).toBeGreaterThanOrEqual(0)
-    const next = stepLaundry(prepareStep(folded.state), 3, 3, rng, ids)
-    expect(next.matched).toBe(true)
+    expect(folded.state.line.slice(2).map((sock) => sock.id)).toEqual(survivors)
+    expect(folded.spawned[0]?.pattern).not.toBe(folded.spawned[1]?.pattern)
+    expect(inPlayEven(folded.state)).toBe(true)
   })
 })
 
@@ -182,22 +190,20 @@ describe('stepLaundry', () => {
     expect(isIntakeMatch(opened.line)).toBe(false)
     const prepared = prepareStep(opened)
     expect(isIntakeMatch(prepared.line)).toBe(true)
-    const folded = stepLaundry(prepared, 3, 3, carefulRng, carefulIds)
+    const folded = stepLaundry(prepared, 3, carefulRng, carefulIds)
     expect(folded.matched).toBe(true)
     expect(folded.left.pattern).toBe(folded.right.pattern)
-    expect(folded.spawned[0]?.pattern).toBe(folded.spawned[1]?.pattern)
+    expect(folded.spawned[0]?.pattern).not.toBe(folded.spawned[1]?.pattern)
     expect(folded.state.line).toHaveLength(SLOT_COUNT)
-    expect(isIntakeMatch(folded.state.line)).toBe(false)
     expect(inPlayEven(folded.state)).toBe(true)
 
     const idleRng = rngFrom(4)
     const idleIds = { next: 1 }
-    const dropped = stepLaundry(createLaundry(idleRng, idleIds), 3, 3, idleRng, idleIds)
-    expect(dropped.matched).toBe(false)
-    expect(dropped.left.pattern).not.toBe(dropped.right.pattern)
+    const idle = createLaundry(idleRng, idleIds)
+    const dropped = stepLaundry(idle, 3, idleRng, idleIds)
+    expect(dropped.matched).toBe(isIntakeMatch(idle.line))
     expect(inPlayEven(dropped.state)).toBe(true)
-    expect(stepIsSavable(dropped.state, 3)).toBe(true)
-    expect(isIntakeMatch(dropped.state.line)).toBe(false)
+    expect(dropped.state.line.slice(2, 6).length).toBe(4)
   })
 
   it('reties the orphans when a mismatch falls off', () => {

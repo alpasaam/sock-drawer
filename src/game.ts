@@ -67,6 +67,11 @@ export class Game {
 
   private phase: Phase = 'title'
   private line: Sock[] = []
+  private owed: number[] = []
+  private incoming: [Sock, Sock] = [
+    { id: -1, pattern: 0 },
+    { id: -2, pattern: 1 },
+  ]
   private actors: Actor[] = []
   private ghosts: Ghost[] = []
   private layout: Layout = computeLayout(800, 600)
@@ -94,7 +99,7 @@ export class Game {
     this.canvas = canvas
     this.ctx = ctx
     const laundry = createLaundry(Math.random, this.ids)
-    this.line = laundry.line
+    this.applyLaundry(laundry)
     this.bindUi()
     this.bindPointer()
     this.syncHud()
@@ -148,7 +153,7 @@ export class Game {
     if (fresh || this.phase === 'over') {
       this.ids.next = 1
       const laundry = createLaundry(Math.random, this.ids)
-      this.line = laundry.line
+      this.applyLaundry(laundry)
       this.actors = []
       this.ghosts = []
       this.snapped = false
@@ -224,8 +229,13 @@ export class Game {
     const leftActor = this.actors.find((actor) => actor.sock.id === left.id) ?? null
     const rightActor = this.actors.find((actor) => actor.sock.id === right.id) ?? null
     const diff = difficulty(this.folds)
-    const outcome = stepLaundry({ line: this.line }, diff.window, diff.patterns, Math.random, this.ids)
-    this.line = outcome.state.line
+    const outcome = stepLaundry(
+      { line: this.line, owed: this.owed, incoming: this.incoming },
+      diff.patterns,
+      Math.random,
+      this.ids,
+    )
+    this.applyLaundry(outcome.state)
     this.selectedId = null
     this.drag = null
     this.lock = this.reduceMotion ? 180 : 460
@@ -386,10 +396,8 @@ export class Game {
   private ensureActors(snap: boolean): void {
     const byId = new Map(this.actors.map((actor) => [actor.sock.id, actor]))
     const next: Actor[] = []
-    this.line.forEach((sock, slot) => {
+    const place = (sock: Sock, slot: number, x: number, y: number) => {
       const existing = byId.get(sock.id)
-      const x = this.layout.slotX[slot] ?? 0
-      const y = this.layout.slotY[slot] ?? this.layout.lineY
       if (existing) {
         existing.sock = sock
         existing.slot = slot
@@ -400,32 +408,74 @@ export class Game {
         next.push(existing)
         return
       }
-      next.push({
-        sock,
-        slot,
-        x: snap ? x : (this.layout.slotX[0] ?? x) - this.layout.sockW,
-        y,
-        bounce: 0,
-      })
+      next.push({ sock, slot, x, y, bounce: 0 })
+    }
+    this.line.forEach((sock, slot) => {
+      const x = this.layout.slotX[slot] ?? 0
+      const y = this.layout.slotY[slot] ?? this.layout.lineY
+      place(sock, slot, snap ? x : (this.layout.slotX[0] ?? x) - this.layout.sockW, y)
+    })
+    this.incoming.forEach((sock, index) => {
+      const home = this.marchTarget(-1 - index, 0)
+      place(sock, -1 - index, home.x, home.y)
     })
     this.actors = next
   }
 
   private placeActors(dt: number): void {
+    const expected = this.line.length + this.incoming.length
     if (!this.snapped && this.layout.slotX.length === this.line.length) {
       this.ensureActors(true)
       this.snapped = true
-    } else if (this.actors.length !== this.line.length) {
+    } else if (this.actors.length !== expected) {
       this.ensureActors(false)
     }
     const blend = 1 - Math.exp(-dt / (this.reduceMotion ? 40 : 90))
+    const march = this.march()
     for (const actor of this.actors) {
-      const targetX = this.layout.slotX[actor.slot] ?? actor.x
-      const targetY = this.layout.slotY[actor.slot] ?? actor.y
+      const target = this.marchTarget(actor.slot, march)
       const dragging = this.drag?.sockId === actor.sock.id
-      if (!dragging) actor.x += (targetX - actor.x) * blend
-      actor.y += (targetY - actor.y) * blend
+      if (!dragging) actor.x += (target.x - actor.x) * blend
+      actor.y += (target.y - actor.y) * blend
     }
+  }
+
+  private march(): number {
+    if (this.phase !== 'play' || this.reduceMotion) return 0
+    const interval = difficulty(this.folds).intervalMs
+    return clamp(1 - this.timeLeft / interval, 0, 1)
+  }
+
+  /** Where a sock is headed as the line slides two pegs toward the drawer. */
+  private marchTarget(slot: number, march: number): { x: number; y: number } {
+    const slots = this.layout.slotX.length
+    const step = this.layout.step
+    const yAt = (index: number) => this.layout.slotY[index] ?? this.layout.lineY
+    const xAt = (index: number) => this.layout.slotX[index] ?? this.layout.lineRight
+    if (slot < 0) {
+      const index = -slot - 1
+      const startX = (this.layout.slotX[0] ?? 0) - step * (2 - index)
+      const endX = xAt(index)
+      return { x: startX + (endX - startX) * march, y: yAt(Math.min(index, slots - 1)) }
+    }
+    const fromX = xAt(slot)
+    const fromY = yAt(slot)
+    const dest = slot + 2
+    if (dest < slots) {
+      return {
+        x: fromX + (xAt(dest) - fromX) * march,
+        y: fromY + (yAt(dest) - fromY) * march,
+      }
+    }
+    const mouthX = this.layout.mouth.x + this.layout.mouth.w * (dest === slots ? 0.28 : 0.55)
+    const mouthY = this.layout.mouth.y + 8
+    return { x: fromX + (mouthX - fromX) * march, y: fromY + (mouthY - fromY) * march }
+  }
+
+  private applyLaundry(laundry: { line: Sock[]; owed: number[]; incoming: [Sock, Sock] }): void {
+    this.line = laundry.line
+    this.owed = laundry.owed
+    this.incoming = laundry.incoming
   }
 
   private stepGhosts(dt: number): void {
@@ -520,7 +570,7 @@ export class Game {
       hint.textContent = 'Those two match. Press Space, or tap the drawer, to fold them.'
       return
     }
-    hint.textContent = 'Swap until the last two socks match. Space folds a pair.'
+    hint.textContent = 'The line is sliding. Swap the last two into a pair before they reach the drawer.'
   }
 
   private resize(): void {
@@ -542,9 +592,9 @@ export class Game {
     let best: Actor | null = null
     let bestDist = Infinity
     for (const actor of this.actors) {
-      const center = this.layout.slotX[actor.slot]
-      const top = this.layout.slotY[actor.slot]
-      if (center == null || top == null) continue
+      if (actor.slot < 0) continue
+      const center = actor.x
+      const top = actor.y
       const half = this.layout.step * 0.5
       if (Math.abs(x - center) > half) continue
       if (y < top - 28 || y > top + this.layout.sockH + 12) continue

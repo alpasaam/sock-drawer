@@ -233,6 +233,10 @@ export function createOpeningLine(rng: Rng, ids: IdGen): Sock[] {
 
 export type Laundry = {
   line: Sock[]
+  /** Patterns that have one sock in play and still need a mate. */
+  owed: number[]
+  /** The next two socks, already chosen, sliding in from the left. */
+  incoming: [Sock, Sock]
 }
 
 export type StepOutcome = {
@@ -244,12 +248,23 @@ export type StepOutcome = {
 }
 
 export function createLaundry(rng: Rng, ids: IdGen): Laundry {
-  return { line: unsettle(createOpeningLine(rng, ids), 3) }
+  let line = scramble(pairedLine(ids), 18, rng)
+  if (isIntakeMatch(line)) line = swapAt(line, Math.floor(rng() * (line.length - 2)))
+  const rolled = rollIncoming([], 3, rng, ids)
+  return { line, owed: rolled.owed, incoming: rolled.socks }
 }
 
-/** Every pattern on the line still has a partner somewhere. */
+/** Every pattern on the line, in the incoming pair, or still owed has a mate. */
 export function inPlayEven(state: Laundry): boolean {
-  return countsAreEven(state.line)
+  const counts = new Map<number, number>()
+  const add = (pattern: number) => counts.set(pattern, (counts.get(pattern) ?? 0) + 1)
+  for (const sock of state.line) add(sock.pattern)
+  for (const sock of state.incoming) add(sock.pattern)
+  for (const pattern of state.owed) add(pattern)
+  for (const count of counts.values()) {
+    if (count % 2 !== 0) return false
+  }
+  return true
 }
 
 /** The next fold can be made by neighbor swaps inside the window. */
@@ -283,13 +298,11 @@ export function retie(line: readonly Sock[], fallenA: Sock, fallenB: Sock): Sock
 }
 
 /**
- * One beat. The last two socks leave together.
- * A match is folded. A mismatch falls, and the line is retied so pairs stay even.
- * Two new socks hop on at the far end, then the intake is left one swap away.
+ * One beat. The last two socks leave together and everyone else slides toward the drawer.
+ * The incoming pair lands on the left. The next pair is random, and a mate is never glued beside its twin.
  */
 export function stepLaundry(
   state: Laundry,
-  window: number,
   patterns: number,
   rng: Rng,
   ids: IdGen,
@@ -301,22 +314,119 @@ export function stepLaundry(
     throw new Error('The line needs two socks')
   }
   const matched = left.pattern === right.pattern
+  let spawned: [Sock, Sock] = [state.incoming[0], state.incoming[1]]
   let line = state.line.slice(0, -2)
-  if (!matched) line = retie(line, left, right)
-  const pattern = pickPattern(line, patterns, rng)
-  const spawned: [Sock, Sock] = [makeSock(pattern, ids), makeSock(pattern, ids)]
-  line = unsettle([spawned[0], spawned[1], ...line], window)
-  return { state: { line }, left, right, matched, spawned }
+  let owed = state.owed
+  if (!matched) {
+    const settled = settleMismatch(line, owed, spawned, left, right)
+    line = settled.line
+    owed = settled.owed
+    spawned = settled.incoming
+  }
+  line = [spawned[0], spawned[1], ...line]
+  const rolled = rollIncoming(owed, patterns, rng, ids)
+  return {
+    state: { line, owed: rolled.owed, incoming: rolled.socks },
+    left,
+    right,
+    matched,
+    spawned,
+  }
 }
 
-function pickPattern(existing: readonly Sock[], patterns: number, rng: Rng): number {
-  const available = Math.max(2, Math.min(PATTERN_COUNT, patterns))
-  const counts = Array.from({ length: available }, () => 0)
-  for (const sock of existing) {
-    const pattern = sock.pattern
-    if (pattern >= 0 && pattern < available) counts[pattern] = (counts[pattern] ?? 0) + 1
+function pairedLine(ids: IdGen): Sock[] {
+  const line: Sock[] = []
+  for (let pattern = 0; pattern < SLOT_COUNT / 2; pattern++) {
+    line.push(makeSock(pattern, ids), makeSock(pattern, ids))
   }
-  const least = Math.min(...counts)
-  const pool = counts.flatMap((count, pattern) => (count === least ? [pattern] : []))
-  return pool[Math.floor(rng() * pool.length)] ?? 0
+  return line
+}
+
+function rollIncoming(
+  owed: readonly number[],
+  patterns: number,
+  rng: Rng,
+  ids: IdGen,
+): { socks: [Sock, Sock]; owed: number[] } {
+  const first = takeOne(owed, null, patterns, rng, ids)
+  const second = takeOne(first.owed, first.sock.pattern, patterns, rng, ids)
+  return { socks: [first.sock, second.sock], owed: second.owed }
+}
+
+function takeOne(
+  owed: readonly number[],
+  avoid: number | null,
+  patterns: number,
+  rng: Rng,
+  ids: IdGen,
+): { sock: Sock; owed: number[] } {
+  const bag = [...owed]
+  const available = Math.max(2, Math.min(PATTERN_COUNT, patterns))
+  const repay = bag.length >= 3 || (bag.length > 0 && rng() < 0.62)
+  const preferred = bag
+    .map((pattern, index) => ({ pattern, index }))
+    .filter((item) => item.pattern !== avoid)
+  if (repay && preferred.length > 0) {
+    const pick = preferred[Math.floor(rng() * preferred.length)] ?? preferred[0]
+    if (!pick) return { sock: makeSock(0, ids), owed: bag }
+    bag.splice(pick.index, 1)
+    return { sock: makeSock(pick.pattern, ids), owed: bag }
+  }
+  const fresh = Array.from({ length: available }, (_, pattern) => pattern).filter((pattern) => pattern !== avoid)
+  const pattern = fresh[Math.floor(rng() * fresh.length)] ?? 0
+  bag.push(pattern)
+  return { sock: makeSock(pattern, ids), owed: bag }
+}
+
+function patternCount(
+  pattern: number,
+  line: readonly Sock[],
+  incoming: readonly Sock[],
+  owed: readonly number[],
+): number {
+  return (
+    line.filter((sock) => sock.pattern === pattern).length +
+    incoming.filter((sock) => sock.pattern === pattern).length +
+    owed.filter((owedPattern) => owedPattern === pattern).length
+  )
+}
+
+function settleMismatch(
+  line: readonly Sock[],
+  owed: readonly number[],
+  incoming: readonly [Sock, Sock],
+  fallenA: Sock,
+  fallenB: Sock,
+): { line: Sock[]; owed: number[]; incoming: [Sock, Sock] } {
+  const next = [...line]
+  const bag = [...owed]
+  const arriving: [Sock, Sock] = [{ ...incoming[0] }, { ...incoming[1] }]
+  if (fallenA.pattern === fallenB.pattern) return { line: next, owed: bag, incoming: arriving }
+  if (
+    patternCount(fallenA.pattern, next, arriving, bag) % 2 === 0 &&
+    patternCount(fallenB.pattern, next, arriving, bag) % 2 === 0
+  ) {
+    return { line: next, owed: bag, incoming: arriving }
+  }
+  let donor = -1
+  for (let index = next.length - 1; index >= 0; index--) {
+    if (next[index]?.pattern === fallenB.pattern) {
+      donor = index
+      break
+    }
+  }
+  const sock = next[donor]
+  if (sock) {
+    next[donor] = { ...sock, pattern: fallenA.pattern }
+    return { line: next, owed: bag, incoming: arriving }
+  }
+  const owedIndex = bag.lastIndexOf(fallenB.pattern)
+  if (owedIndex >= 0) {
+    bag[owedIndex] = fallenA.pattern
+    return { line: next, owed: bag, incoming: arriving }
+  }
+  const arrivingIndex = arriving.findIndex((sock) => sock.pattern === fallenB.pattern)
+  const arrival = arriving[arrivingIndex]
+  if (arrival) arriving[arrivingIndex] = { ...arrival, pattern: fallenA.pattern }
+  return { line: next, owed: bag, incoming: arriving }
 }
