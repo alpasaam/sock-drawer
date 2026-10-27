@@ -12,7 +12,6 @@ import {
   LIVES,
   createLaundry,
   difficulty,
-  helperIndex,
   isIntakeMatch,
   pointsForCombo,
   stepLaundry,
@@ -521,7 +520,7 @@ export class Game {
       hint.textContent = 'Those two match. Press Space, or tap the drawer, to fold them.'
       return
     }
-    hint.textContent = 'Swap the ringed sock next to the one at the end. Space folds a pair.'
+    hint.textContent = 'Swap until the last two socks match. Space folds a pair.'
   }
 
   private resize(): void {
@@ -604,7 +603,6 @@ export class Game {
 function glowFor(line: readonly Sock[], slot: number, partnerReady: boolean): SockDraw['glow'] {
   const end = line.length - 1
   if (slot === end || (partnerReady && slot === end - 1)) return partnerReady ? 'ready' : 'next'
-  if (slot === helperIndex(line)) return 'pair'
   return 'none'
 }
 

@@ -22,7 +22,7 @@ export type SockDraw = {
   y: number
   lift: number
   bounce: number
-  glow: 'none' | 'next' | 'ready' | 'pair'
+  glow: 'none' | 'next' | 'ready'
   scale: number
   alpha: number
 }
@@ -339,14 +339,6 @@ function drawSock(
   ctx.globalAlpha = sock.alpha
   ctx.translate(sock.x, sock.y - sock.lift * 12 - hop)
   ctx.rotate(sway * face)
-
-  if (sock.glow === 'pair') {
-    ctx.strokeStyle = 'rgba(47, 143, 107, 0.95)'
-    ctx.lineWidth = Math.max(2.5, w * 0.06)
-    ctx.beginPath()
-    ctx.ellipse(face * w * 0.12, h * 0.52, w * 0.72, h * 0.5, 0, 0, Math.PI * 2)
-    ctx.stroke()
-  }
 
   if (sock.glow === 'ready' || sock.glow === 'next') {
     ctx.fillStyle = sock.glow === 'ready' ? 'rgba(47, 143, 107, 0.2)' : 'rgba(226, 91, 74, 0.1)'
