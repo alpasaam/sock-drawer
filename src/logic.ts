@@ -1,6 +1,6 @@
 /** Socks hang in a row. Index 0 is farthest from the drawer; the last two are next in. */
 
-export const SLOT_COUNT = 6
+export const SLOT_COUNT = 12
 export const LIVES = 3
 export const PATTERN_COUNT = 6
 
@@ -211,7 +211,7 @@ export function countsAreEven(line: readonly Sock[]): boolean {
 export function difficulty(folds: number): Difficulty {
   const safeFolds = Math.max(0, folds)
   const patterns = safeFolds < 6 ? 3 : safeFolds < 14 ? 4 : safeFolds < 24 ? 5 : PATTERN_COUNT
-  const window = Math.min(SLOT_COUNT, 3 + Math.floor(safeFolds / 6))
+  const window = Math.min(SLOT_COUNT, 3 + Math.floor(safeFolds / 2))
   const intervalMs = Math.max(1100, 2800 - safeFolds * 45)
   const scramble = safeFolds < 4 ? 4 : safeFolds < 12 ? 6 : 8
   return { window, intervalMs, patterns, scramble }

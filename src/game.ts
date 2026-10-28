@@ -2,6 +2,7 @@ import { LaundryAudio } from './audio.ts'
 import {
   computeLayout,
   faceFor,
+  linePoint,
   paint,
   type Frame,
   type GhostDraw,
@@ -41,6 +42,9 @@ type Ghost = {
   vy: number
   life: number
   max: number
+  intoDrawer: boolean
+  scale: number
+  alpha: number
 }
 
 type Drag = {
@@ -208,7 +212,7 @@ export class Game {
     this.floaters = this.floaters.filter((floater) => floater.life > 0)
     const targetOpen = this.ghosts.length > 0 ? 1 : this.phase === 'play' ? 0.72 : 0.58
     this.open += (targetOpen - this.open) * (1 - Math.exp(-dt / 140))
-    this.placeActors(dt)
+    this.placeActors()
     this.stepGhosts(dt)
     for (const actor of this.actors) actor.bounce = Math.max(0, actor.bounce - dt / 420)
     this.paint(now)
@@ -238,7 +242,6 @@ export class Game {
     this.applyLaundry(outcome.state)
     this.selectedId = null
     this.drag = null
-    this.lock = this.reduceMotion ? 180 : 460
 
     if (outcome.matched) {
       this.combo += 1
@@ -265,6 +268,7 @@ export class Game {
       if (this.lives <= 0) this.pendingOver = true
     }
 
+    this.lock = this.pendingOver ? 640 : 0
     this.timeLeft = difficulty(this.folds).intervalMs
     this.ensureActors(false)
     this.syncHud()
@@ -272,16 +276,21 @@ export class Game {
 
   private releaseSock(actor: Actor | null, intoDrawer: boolean): void {
     if (!actor) return
-    const mouthX = this.layout.mouth.x + this.layout.mouth.w * 0.45
+    const sink = intoDrawer ? this.swallow(actor.x) : 0
+    const mouthX = this.layout.mouth.x + this.layout.mouth.w * 0.62
+    const life = intoDrawer ? 380 : 460
     this.ghosts.push({
       pattern: actor.sock.pattern,
       face: faceFor(actor.sock.id),
       x: actor.x,
       y: actor.y,
-      vx: intoDrawer ? (mouthX - actor.x) / 280 : 0.04,
-      vy: intoDrawer ? 0.16 : 0.42,
-      life: 460,
-      max: 460,
+      vx: intoDrawer ? (mouthX - actor.x) / life : 0.02,
+      vy: intoDrawer ? 0 : 0.16,
+      life,
+      max: life,
+      intoDrawer,
+      scale: 1 - sink * 0.42,
+      alpha: 1 - sink * 0.5,
     })
   }
 
@@ -326,26 +335,27 @@ export class Game {
     if (Math.abs(point.x - this.drag.originX) > 8) this.drag.moved = true
     const actor = this.actors.find((item) => item.sock.id === this.drag?.sockId)
     if (!actor) return
-    const left = this.layout.slotX[0] ?? point.x
-    const right = this.layout.slotX[this.layout.slotX.length - 1] ?? point.x
-    actor.x = clamp(point.x, left, right)
-    for (let guard = 0; guard < 4; guard++) {
+    const first = this.layout.slotX[0] ?? point.x
+    const last = this.layout.slotX[this.layout.slotX.length - 1] ?? point.x
+    actor.x = clamp(point.x, first - this.layout.step, last + this.layout.step * 0.35)
+    actor.y = linePoint(this.layout.lineLeft, this.layout.lineRight, this.layout.lineY, this.layout.sag, actor.x)
+    const march = this.march()
+    let swapped = false
+    for (let guard = 0; guard < this.line.length; guard++) {
       const index = actor.slot
-      const slotX = this.layout.slotX
-      const here = slotX[index]
-      const prev = slotX[index - 1]
-      const next = slotX[index + 1]
-      if (here == null) break
-      if (next != null && point.x > (here + next) / 2 + 6) {
-        this.swapSlots(index)
+      if (index + 1 < this.line.length && actor.x > this.marchTarget(index + 1, march).x) {
+        this.swapSlots(index, false)
+        swapped = true
         continue
       }
-      if (prev != null && point.x < (prev + here) / 2 - 6) {
-        this.swapSlots(index - 1)
+      if (index > 0 && actor.x < this.marchTarget(index - 1, march).x) {
+        this.swapSlots(index - 1, false)
+        swapped = true
         continue
       }
       break
     }
+    if (swapped) this.audio.swap()
   }
 
   private onUp(event: PointerEvent): void {
@@ -376,11 +386,19 @@ export class Game {
     this.selectedId = actor.sock.id
   }
 
-  private swapSlots(index: number): void {
+  private swapSlots(index: number, sound = true): void {
     if (index < 0 || index >= this.line.length - 1) return
     this.line = swapAt(this.line, index)
     this.reindex()
-    this.audio.swap()
+    const march = this.march()
+    for (const actor of this.actors) {
+      if (actor.sock.id === this.drag?.sockId) continue
+      if (actor.slot !== index && actor.slot !== index + 1) continue
+      const target = this.marchTarget(actor.slot, march)
+      actor.x = target.x
+      actor.y = target.y
+    }
+    if (sound) this.audio.swap()
   }
 
   private reindex(): void {
@@ -422,7 +440,7 @@ export class Game {
     this.actors = next
   }
 
-  private placeActors(dt: number): void {
+  private placeActors(): void {
     const expected = this.line.length + this.incoming.length
     if (!this.snapped && this.layout.slotX.length === this.line.length) {
       this.ensureActors(true)
@@ -430,13 +448,12 @@ export class Game {
     } else if (this.actors.length !== expected) {
       this.ensureActors(false)
     }
-    const blend = 1 - Math.exp(-dt / (this.reduceMotion ? 40 : 90))
     const march = this.march()
     for (const actor of this.actors) {
+      if (this.drag?.sockId === actor.sock.id) continue
       const target = this.marchTarget(actor.slot, march)
-      const dragging = this.drag?.sockId === actor.sock.id
-      if (!dragging) actor.x += (target.x - actor.x) * blend
-      actor.y += (target.y - actor.y) * blend
+      actor.x = target.x
+      actor.y = target.y
     }
   }
 
@@ -483,34 +500,54 @@ export class Game {
       ghost.life -= dt
       ghost.x += ghost.vx * dt
       ghost.y += ghost.vy * dt
-      ghost.vy += 0.0011 * dt
+      if (!ghost.intoDrawer) ghost.vy += 0.0012 * dt
     }
     this.ghosts = this.ghosts.filter((ghost) => ghost.life > 0)
+  }
+
+  /** How far a sock has slid past the last peg into the drawer mouth. */
+  private swallow(x: number): number {
+    const lastX = this.layout.slotX[this.layout.slotX.length - 1] ?? x
+    const mouthX = this.layout.mouth.x + this.layout.mouth.w * 0.35
+    const span = Math.max(this.layout.step, mouthX - lastX)
+    return clamp((x - lastX) / span, 0, 1)
   }
 
   private paint(now: number): void {
     const partnerReady = this.partnerReady()
     const interval = difficulty(this.folds).intervalMs
     const timer = clamp(this.timeLeft / interval, 0, 1)
-    const socks: SockDraw[] = this.actors.map((actor) => ({
-      id: actor.sock.id,
-      pattern: actor.sock.pattern,
-      x: actor.x,
-      y: actor.y,
-      lift: this.selectedId === actor.sock.id || this.drag?.sockId === actor.sock.id ? 1 : 0,
-      bounce: actor.bounce,
-      glow: glowFor(this.line, actor.slot, partnerReady),
-      scale: 1,
-      alpha: 1,
-    }))
-    const ghosts: GhostDraw[] = this.ghosts.map((ghost) => ({
-      pattern: ghost.pattern,
-      face: ghost.face,
-      x: ghost.x,
-      y: ghost.y,
-      scale: 0.55 + 0.45 * (ghost.life / ghost.max),
-      alpha: Math.max(0, ghost.life / ghost.max),
-    }))
+    const heldId = this.drag?.sockId
+    const socks: SockDraw[] = this.actors.map((actor) => {
+      const dragging = actor.sock.id === heldId
+      const held = dragging || actor.sock.id === this.selectedId
+      const leaving = !dragging && actor.slot >= this.line.length - 2
+      const sink = leaving ? this.swallow(actor.x) : 0
+      return {
+        id: actor.sock.id,
+        pattern: actor.sock.pattern,
+        x: actor.x,
+        y: actor.y,
+        lift: dragging ? 1.7 : held ? 1 : 0,
+        bounce: actor.bounce,
+        glow: glowFor(this.line, actor.slot, partnerReady),
+        scale: held ? 1.04 : 1 - sink * 0.42,
+        alpha: 1 - sink * 0.5,
+      }
+    })
+    socks.sort((a, b) => Number(a.id === heldId) - Number(b.id === heldId))
+    const ghosts: GhostDraw[] = this.ghosts.map((ghost) => {
+      const fade = Math.max(0, ghost.life / ghost.max)
+      return {
+        pattern: ghost.pattern,
+        face: ghost.face,
+        x: ghost.x,
+        y: ghost.y,
+        scale: ghost.intoDrawer ? ghost.scale * (0.82 + 0.18 * fade) : ghost.scale * (0.7 + 0.3 * fade),
+        alpha: ghost.alpha * fade,
+        pin: ghost.intoDrawer,
+      }
+    })
     const frame: Frame = {
       layout: this.layout,
       time: now,

@@ -1,3 +1,5 @@
+import { SLOT_COUNT } from './logic.ts'
+
 export type Layout = {
   w: number
   h: number
@@ -34,6 +36,7 @@ export type GhostDraw = {
   y: number
   scale: number
   alpha: number
+  pin: boolean
 }
 
 export type Frame = {
@@ -77,10 +80,10 @@ export function computeLayout(w: number, h: number): Layout {
   const lineY = clamp(h * 0.38, 108, h * 0.46)
   const sag = clamp(h * 0.02, 6, 18)
   const span = Math.max(120, lineRight - lineLeft)
-  const slotCount = 6
+  const slotCount = SLOT_COUNT
   const step = span / slotCount
-  const sockH = clamp(Math.min(h * 0.34, step * 2.7), 92, 168)
-  const sockW = clamp(sockH * 0.52, 34, step * 0.9)
+  const sockH = clamp(step * 2.2, 46, 132)
+  const sockW = clamp(sockH * 0.48, 14, step * 0.84)
   const slotX: number[] = []
   const slotY: number[] = []
   for (let index = 0; index < slotCount; index++) {
@@ -232,11 +235,12 @@ function beatBead(ctx: CanvasRenderingContext2D, frame: Frame): void {
 
 function intakeWash(ctx: CanvasRenderingContext2D, frame: Frame): void {
   const { layout } = frame
-  const right = layout.slotX[5]
-  const left = layout.slotX[4]
+  const last = layout.slotX.length - 1
+  const right = layout.slotX[last]
+  const left = layout.slotX[last - 1]
   if (left == null || right == null) return
   const x = (left + right) / 2
-  const y = layout.slotY[5] ?? layout.lineY
+  const y = layout.slotY[last] ?? layout.lineY
   const radius = layout.step * 1.15
   const color = frame.ready ? 'rgba(80, 150, 90, 0.22)' : 'rgba(226, 91, 74, 0.1)'
   const wash = ctx.createRadialGradient(x, y + layout.sockH * 0.35, 8, x, y + layout.sockH * 0.35, radius)
@@ -256,9 +260,18 @@ function intakeWash(ctx: CanvasRenderingContext2D, frame: Frame): void {
 
 function pins(ctx: CanvasRenderingContext2D, frame: Frame): void {
   for (const sock of frame.socks) {
-    if (sock.scale < 0.9) continue
-    const y = sock.y - sock.lift * 10
-    drawPin(ctx, sock.x, y)
+    if (sock.alpha < 0.4) continue
+    ctx.save()
+    ctx.globalAlpha = sock.alpha
+    drawPin(ctx, sock.x, sock.y - sock.lift * 10)
+    ctx.restore()
+  }
+  for (const ghost of frame.ghosts) {
+    if (!ghost.pin || ghost.alpha < 0.35) continue
+    ctx.save()
+    ctx.globalAlpha = ghost.alpha
+    drawPin(ctx, ghost.x, ghost.y)
+    ctx.restore()
   }
 }
 
@@ -475,7 +488,7 @@ function drawPin(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   ctx.restore()
 }
 
-function linePoint(left: number, right: number, lineY: number, sag: number, x: number): number {
+export function linePoint(left: number, right: number, lineY: number, sag: number, x: number): number {
   const mid = (left + right) / 2
   const half = Math.max(1, (right - left) / 2)
   const t = (x - mid) / half

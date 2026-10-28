@@ -1,8 +1,8 @@
 # Sock Drawer
 
-An endless laundry game. Socks hang on a clothesline. You can only swap neighbors. On each beat the last two socks hop into the drawer together.
+An endless laundry game. Twelve socks hang on a clothesline. You can only swap neighbors. On each beat the last two socks slip into the drawer together.
 
-The line keeps sliding toward the drawer. Two new socks hop on at the far end with every beat, and their mates show up later in the shuffle. More patterns join as your streak grows, and the beats get shorter. Three mismatches jam the drawer.
+The line keeps sliding toward the drawer. Two new socks come on at the far end with every beat, and their mates show up later in the shuffle. More patterns join as your streak grows, and the beats get shorter. Three mismatches jam the drawer.
 
 ## Play
 
