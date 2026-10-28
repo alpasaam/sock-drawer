@@ -212,7 +212,11 @@ export function difficulty(folds: number): Difficulty {
   const safeFolds = Math.max(0, folds)
   const patterns = safeFolds < 6 ? 3 : safeFolds < 14 ? 4 : safeFolds < 24 ? 5 : PATTERN_COUNT
   const window = Math.min(SLOT_COUNT, 3 + Math.floor(safeFolds / 2))
-  const intervalMs = Math.max(1100, 2800 - safeFolds * 45)
+  // Fast drops early, then smaller ones. The beat keeps shortening toward
+  // about 0.6s instead of sticking at 1.1s after a few dozen folds.
+  const startMs = 2800
+  const floorMs = 620
+  const intervalMs = Math.round(floorMs + (startMs - floorMs) * Math.exp(-safeFolds / 42))
   const scramble = safeFolds < 4 ? 4 : safeFolds < 12 ? 6 : 8
   return { window, intervalMs, patterns, scramble }
 }

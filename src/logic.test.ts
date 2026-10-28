@@ -122,11 +122,17 @@ describe('difficulty', () => {
     const later = difficulty(24)
     expect(early.patterns).toBe(3)
     expect(early.window).toBe(3)
+    expect(early.intervalMs).toBe(2800)
     expect(early.intervalMs).toBeGreaterThan(later.intervalMs)
     expect(later.patterns).toBe(6)
     expect(later.window).toBe(SLOT_COUNT)
-    expect(later.intervalMs).toBeGreaterThanOrEqual(1100)
     expect(later.scramble).toBeGreaterThan(early.scramble)
+    const at = (folds: number) => difficulty(folds).intervalMs
+    expect(at(40)).toBeGreaterThan(1400)
+    expect(at(80)).toBeLessThan(at(40))
+    expect(at(160)).toBeLessThan(at(80))
+    expect(at(160)).toBeGreaterThan(600)
+    expect(at(0) - at(20)).toBeGreaterThan(at(60) - at(80))
   })
 })
 
